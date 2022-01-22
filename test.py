@@ -2,10 +2,12 @@ import argparse
 import glob
 import json
 import os
+import sys
 from pathlib import Path
 
 import numpy as np
 import torch
+import torch.nn as nn
 import yaml
 from tqdm import tqdm
 
@@ -16,7 +18,134 @@ from utils.general import coco80_to_coco91_class, check_dataset, check_file, che
 from utils.loss import compute_loss
 from utils.metrics import ap_per_class
 from utils.plots import plot_images, output_to_target
-from utils.torch_utils import select_device, time_synchronized
+from utils.torch_utils import select_device, time_synchronized, revert_sync_batchnorm
+
+
+class TracedModel(nn.Module):
+
+    def __init__(self, model=None, device=None, img_size=(640,640)): 
+        super(TracedModel, self).__init__()
+        
+        print(" Convert model to Traced-model... ") 
+        self.stride = model.stride
+        self.names = model.names
+        self.model = model
+
+        self.model = revert_sync_batchnorm(self.model)
+        self.model.to('cpu')
+        self.model.eval()
+
+        self.detect_layer = self.model.model[-1]
+        self.model.traced = True
+        
+        rand_example = torch.rand(1, 3, img_size, img_size)
+        
+        traced_script_module = torch.jit.trace(self.model, rand_example, strict=False)
+        #traced_script_module = torch.jit.script(self.model)
+        #traced_script_module.save("traced_model.pt")
+        print(" traced_script_module saved! ")
+        self.model = traced_script_module
+        self.model.to(device)
+        self.detect_layer.to(device)
+
+        print(" model is traced! \n") 
+
+    def forward(self, x, augment=False, profile=False):
+        out = self.model(x)
+        out = self.detect_layer(out)
+        return out
+
+
+try:
+    import onnx
+    import onnxruntime as rt
+
+    class ONNXModel(nn.Module):
+        def __init__(self, model=None, device=None, img_size=(640,640), dtype='float', batch_size=1): 
+            super(ONNXModel, self).__init__()
+        
+            print(" Convert model to ONNX... ") 
+            sys.stdout.flush()
+            self.stride = model.stride
+            self.names = model.names
+            self.model = model
+            self.device = device
+            self.dtype = dtype
+
+            self.model = revert_sync_batchnorm(self.model)
+            self.model.to(device)
+            self.model.eval()
+
+            rand_example = torch.rand(batch_size, 3, img_size, img_size)
+            rand_example = rand_example.to(device)
+                
+            if self.dtype == 'half':
+                self.model = self.model.half()
+                rand_example = rand_example.half()
+
+            self.detect_layer = self.model.model[-1]
+            self.model.traced = True
+        
+            self.detect_layer.to(device)
+
+            print(f" rand_example = {rand_example.shape}")
+            torch.onnx.export(self.model, rand_example, 'model.onnx', opset_version=13, dynamic_axes={'input.1': [0, 1, 2, 3]}, 
+                export_params=True, enable_onnx_checker=True)
+            print(" model.onnx is saved! ")        
+       
+            print(" checking model.onnx ... ") 
+            onnx_model = onnx.load("model.onnx")
+            onnx.checker.check_model(onnx_model)
+            print(" model.onnx is checked! ") 
+
+            print("Loading: model.onnx...")
+            sys.stdout.flush()
+            self.model_onnx = rt.InferenceSession('model.onnx')
+            self.inputs = self.model_onnx.get_inputs()
+            self.outputs = self.model_onnx.get_outputs()
+            self.output_names = []
+            for i in self.outputs:
+                self.output_names.append(i.name)
+            
+            print(f"output_names = {self.output_names}")
+
+            self.input_name = self.inputs[0].name
+            print("input_name = ", self.input_name)
+            print(" model.onnx is loaded! \n")
+            sys.stdout.flush()
+
+        def forward(self, x, augment=False, profile=False):
+            #print(f"x.shape = {x.shape}, x.dtype = {x.dtype}")
+            #x = torch.zeros((1, 3, 640, 640), device='cpu')
+
+            x = x.to('cpu')
+            if self.dtype == 'half':
+                x = x.half()
+            else:
+                x = x.float()
+            x = x.numpy()        
+
+            #print(f" x = {x.shape}")
+            out = self.model_onnx.run(self.output_names, {self.input_name: x})
+
+            output = []
+            for index, item in enumerate(out):
+                output.append( torch.tensor(item).to(device=self.device).half() )
+            
+            #out = [out[0], out[1], out[2]]
+            #for index, item in enumerate(out):
+            #    out[index] = torch.tensor(item).to(device=self.device).half()
+
+            out = self.detect_layer(output)
+
+            #for i in out:
+            #    for z in i:
+            #        print(f"out[i[z]] = {z.shape}")
+
+            return out
+
+except BaseException:
+    pass
 
 
 def test(data,
@@ -35,7 +164,10 @@ def test(data,
          save_txt=False,  # for auto-labelling
          save_conf=False,
          plots=True,
-         log_imgs=0):  # number of logged images
+         log_imgs=0,  # number of logged images
+         trace=False,
+         convert_onnx=False,
+         rect=True):
 
     # Initialize/load model and set device
     training = model is not None
@@ -58,6 +190,12 @@ def test(data,
         # Multi-GPU disabled, incompatible with .half() https://github.com/ultralytics/yolov5/issues/99
         # if device.type != 'cpu' and torch.cuda.device_count() > 1:
         #     model = nn.DataParallel(model)
+
+        if trace:
+            model = TracedModel(model, device, opt.img_size)
+        elif convert_onnx:
+            model = ONNXModel(model, device, opt.img_size, dtype='half', batch_size=batch_size)
+            rect = False
 
     # Half
     half = device.type != 'cpu'  # half precision only supported on CUDA
@@ -83,10 +221,10 @@ def test(data,
 
     # Dataloader
     if not training:
-        img = torch.zeros((1, 3, imgsz, imgsz), device=device)  # init img
+        img = torch.zeros((batch_size, 3, imgsz, imgsz), device=device)  # init img
         _ = model(img.half() if half else img) if device.type != 'cpu' else None  # run once
         path = data['test'] if opt.task == 'test' else data['val']  # path to val/test images
-        dataloader = create_dataloader(path, imgsz, batch_size, model.stride.max(), opt, pad=0.5, rect=True)[0]
+        dataloader = create_dataloader(path, imgsz, batch_size, model.stride.max(), opt, pad=0.5, rect=rect)[0]
 
     seen = 0
     names = {k: v for k, v in enumerate(model.names if hasattr(model, 'names') else model.module.names)}
@@ -280,6 +418,8 @@ if __name__ == '__main__':
     parser.add_argument('--data', type=str, default='data/coco.yaml', help='*.data path')
     parser.add_argument('--batch-size', type=int, default=16, help='size of each image batch')
     parser.add_argument('--img-size', type=int, default=1280, help='inference size (pixels)')
+    parser.add_argument('--trace', action='store_true', help='Use Pytorch-traced model')
+    parser.add_argument('--onnx', action='store_true', help='Use ONNX model')
     parser.add_argument('--conf-thres', type=float, default=0.001, help='object confidence threshold')
     parser.add_argument('--iou-thres', type=float, default=0.65, help='IOU threshold for NMS')
     parser.add_argument('--task', default='val', help="'val', 'test', 'study'")
@@ -311,6 +451,8 @@ if __name__ == '__main__':
              opt.verbose,
              save_txt=opt.save_txt,
              save_conf=opt.save_conf,
+             trace=opt.trace,
+             convert_onnx=opt.onnx,
              )
 
     elif opt.task == 'study':  # run over a range of settings and save/plot
