@@ -1021,3 +1021,260 @@ class TR(BottleneckCSPTR):
         super().__init__(c1, c2, n, shortcut, g, e)
         c_ = int(c2 * e)
         self.m = TransformerBlock(c_, c_, 4, n)
+
+
+
+def conv_bn(in_channels, out_channels, kernel_size, stride, padding, groups=1):
+    result = nn.Sequential()
+    result.add_module('conv', nn.Conv2d(in_channels=in_channels, out_channels=out_channels,
+                                                  kernel_size=kernel_size, stride=stride, padding=padding, groups=groups, bias=False))
+    result.add_module('bn', nn.BatchNorm2d(num_features=out_channels))
+    return result
+
+
+class RepVGGBlock(nn.Module):
+
+    def __init__(self, in_channels, out_channels, kernel_size,
+                 stride=1, padding=0, dilation=1, groups=1,
+                 padding_mode='zeros', dummy_fused=False):
+        super().__init__()
+
+        self.groups = groups
+        self.stride = stride
+        self.kernel_size = kernel_size
+        self.in_channels = in_channels
+        self.out_channels = out_channels
+        self.padding = padding
+        self.padding_mode = padding_mode
+        self.dummy_fused = dummy_fused
+
+        #print(f" in_channels = {in_channels}, out_channels = {out_channels}, kernel_size = {kernel_size}, \
+        #    stride = {stride}, padding = {padding}, dilation = {dilation}, groups = {groups}, \
+        #    padding_mode = {padding_mode}, dummy_fused = {dummy_fused} ")
+
+        #assert kernel_size == 3
+        assert padding == 1
+
+        #padding_11 = padding - kernel_size // 2
+        padding_11 = padding - 3 // 2
+
+        self.dense_groups = groups
+
+
+        if not dummy_fused:
+            self.rbr_identity = nn.BatchNorm2d(
+                num_features=in_channels) if (
+                    out_channels == in_channels and
+                    stride == 1) else None
+            self.rbr_dense = conv_bn(
+                in_channels=in_channels,
+                out_channels=out_channels,
+                kernel_size=3,
+                stride=stride,
+                padding=padding,
+                groups=self.dense_groups) if (kernel_size != 1) else None
+            self.rbr_1x1 = conv_bn(
+                in_channels=in_channels,
+                out_channels=out_channels,
+                kernel_size=1,
+                stride=stride,
+                padding=padding_11,
+                groups=groups)
+        else:
+            self.rbr_dense = nn.Conv2d(
+                in_channels=in_channels,
+                out_channels=out_channels,
+                kernel_size=kernel_size,
+                stride=stride,
+                padding=padding if (kernel_size != 1) else 0,
+                groups=groups, bias=True)
+            self.rbr_identity = None
+
+
+        num_additional_kernels = max((kernel_size-3) // 2, 0)
+        self.additional_kernels = nn.ModuleList()
+        for i in range(num_additional_kernels):
+            ksize = 5 + i*2
+            pad = dilation*(ksize-1)//2
+            mixconv = conv_bn(
+                in_channels=in_channels, out_channels=out_channels,
+                kernel_size=ksize, stride=stride, padding=pad,
+                groups=self.dense_groups)
+            self.additional_kernels.append(mixconv)
+
+
+    def forward(self, inputs):
+
+        if self.rbr_identity is None:
+            id_out = 0
+        else:
+            id_out = self.rbr_identity(inputs)
+
+        if not self.dummy_fused:
+            rbr_1x1_output = self.rbr_1x1(inputs)
+        else:
+            rbr_1x1_output = None
+
+        dense_output = self.rbr_dense(inputs)
+
+        if not self.dummy_fused:
+            out = dense_output + rbr_1x1_output + id_out
+        elif self.rbr_identity is not None:
+            out = dense_output + id_out
+        else:
+            out = dense_output
+
+        return out
+
+
+    def fuse_conv_bn(self, conv, bn):
+        """
+        # n,c,h,w - conv
+        # n - bn (scale, bias, mean, var)
+
+        if type(bn) is nn.Identity or type(bn) is None:
+            return
+
+        conv.weight
+        running_mean = bn.running_mean
+        running_var = bn.running_var
+        gamma = bn.weight
+        beta = bn.bias
+        eps = bn.eps
+        """
+        std = (bn.running_var + bn.eps).sqrt()
+        bias = bn.bias - bn.running_mean * bn.weight / std
+
+        t = (bn.weight / std).reshape(-1, 1, 1, 1)
+        weights = conv.weight * t
+
+        bn = nn.Identity()
+        conv = nn.Conv2d(in_channels = conv.in_channels,
+                              out_channels = conv.out_channels,
+                              kernel_size = conv.kernel_size,
+                              stride=conv.stride,
+                              padding = conv.padding,
+                              dilation = conv.dilation,
+                              groups = conv.groups,
+                              bias = True,
+                              padding_mode = conv.padding_mode)
+
+        conv.weight = torch.nn.Parameter(weights)
+        conv.bias = torch.nn.Parameter(bias)
+
+        return conv
+
+
+    def fuse_repvgg_block(self):    
+        print(f"fuse_repvgg_block")
+        if self.dummy_fused:
+            return
+                
+        self.rbr_dense = self.fuse_conv_bn(self.rbr_dense.conv, self.rbr_dense.bn)
+
+        if isinstance(self.rbr_1x1, nn.Sequential) and isinstance(self.rbr_1x1[0], nn.AvgPool2d): 
+            self.rbr_1x1[1] = self.fuse_conv_bn(self.rbr_1x1[1].conv, self.rbr_1x1[1].bn)
+            rbr_1x1_bias = self.rbr_1x1[1].bias
+
+            weight_1x1_expanded = torch.nn.functional.interpolate(self.rbr_1x1[1].weight, scale_factor=2.0, mode='nearest')
+            weight_1x1_expanded = weight_1x1_expanded / 4
+            weight_1x1_expanded = torch.nn.functional.pad(weight_1x1_expanded, [1, 0, 1, 0])
+        else:
+            self.rbr_1x1 = self.fuse_conv_bn(self.rbr_1x1.conv, self.rbr_1x1.bn)
+            rbr_1x1_bias = self.rbr_1x1.bias
+
+            weight_1x1_expanded = torch.nn.functional.pad(self.rbr_1x1.weight, [1, 1, 1, 1])
+
+        if isinstance(self.rbr_identity, nn.BatchNorm2d) and (self.stride == 1):
+            identity_conv_1x1 = nn.Conv2d(
+                    in_channels=self.in_channels,
+                    out_channels=self.out_channels,
+                    kernel_size=1,
+                    stride=1,
+                    padding=0,
+                    groups=self.groups, 
+                    bias=False)
+            identity_conv_1x1.weight = torch.nn.Parameter( torch.ones_like(self.rbr_1x1.weight) )
+            
+            identity_conv_1x1 = self.fuse_conv_bn(identity_conv_1x1, self.rbr_identity)
+            bias_identity_expanded = identity_conv_1x1.bias
+            weight_identity_expanded = torch.nn.functional.pad(identity_conv_1x1.weight, [1, 1, 1, 1])
+            self.rbr_identity = None
+        else:
+            bias_identity_expanded = torch.nn.Parameter( torch.zeros_like(rbr_1x1_bias) )
+            weight_identity_expanded = torch.nn.Parameter( torch.zeros_like(weight_1x1_expanded) )            
+
+        #print(f"self.rbr_1x1.weight = {self.rbr_1x1.weight.shape}, ")
+        #print(f"weight_1x1_expanded = {weight_1x1_expanded.shape}, ")
+        #print(f"self.rbr_dense.weight = {self.rbr_dense.weight.shape}, ")
+
+        self.rbr_dense.weight = torch.nn.Parameter(self.rbr_dense.weight + weight_1x1_expanded + weight_identity_expanded)
+        self.rbr_dense.bias = torch.nn.Parameter(self.rbr_dense.bias + rbr_1x1_bias + bias_identity_expanded)
+
+        self.rbr_1x1 = nn.Identity()
+                       
+        self.dummy_fused = True
+
+
+class ConvRepVGG(nn.Module):
+    # Standard convolution
+    def __init__(self, c1, c2, k=1, s=1, p=None, g=1, act=True):  # ch_in, ch_out, kernel, stride, padding, groups
+        super(ConvRepVGG, self).__init__()
+        self.conv = RepVGGBlock(c1, c2, k, s, autopad(k, p), groups=g)
+        self.act = nn.SiLU() if act else nn.Identity()
+
+    def forward(self, x):
+        return self.act(self.conv(x))
+
+
+
+class BottleneckCSPRepVGG2(nn.Module):
+    # CSP Bottleneck https://github.com/WongKinYiu/CrossStagePartialNetworks
+    def __init__(self, c1, c2, n=1, shortcut=False, g=1, e=0.5):  # ch_in, ch_out, number, shortcut, groups, expansion
+        super(BottleneckCSPRepVGG2, self).__init__()
+        c_ = int(c2)  # hidden channels
+        self.cv1 = Conv(c1, c_, 1, 1)
+        self.cv2 = nn.Conv2d(c_, c_, 1, 1, bias=False)
+        self.cv3 = Conv(2 * c_, c2, 1, 1)
+        self.bn = nn.BatchNorm2d(2 * c_) 
+        self.act = nn.SiLU()
+        self.m = nn.Sequential(*[ConvRepVGG(c_, c_, k=3, g=g) for _ in range(n)])
+
+    def forward(self, x):
+        x1 = self.cv1(x)
+        y1 = self.m(x1)
+        y2 = self.cv2(x1)
+        return self.cv3(self.act(self.bn(torch.cat((y1, y2), dim=1))))
+
+
+class BottleneckCSPFRepVGG(nn.Module):
+    # CSP Bottleneck https://github.com/WongKinYiu/CrossStagePartialNetworks
+    def __init__(self, c1, c2, n=1, shortcut=True, g=1, e=0.5):  # ch_in, ch_out, number, shortcut, groups, expansion
+        super(BottleneckCSPFRepVGG, self).__init__()
+        c_ = int(c2 * e)  # hidden channels
+        self.cv1 = Conv(c1, c_, 1, 1)
+        self.cv2 = nn.Conv2d(c1, c_, 1, 1, bias=False)
+        #self.cv3 = nn.Conv2d(c_, c_, 1, 1, bias=False)
+        self.cv4 = Conv(2 * c_, c2, 1, 1)
+        self.bn = nn.BatchNorm2d(2 * c_)  # applied to cat(cv2, cv3)
+        self.act = nn.SiLU()
+        self.m = nn.Sequential(*[ConvRepVGG(c_, c_, k=3, g=g) for _ in range(n)])
+
+    def forward(self, x):
+        y1 = self.m(self.cv1(x))
+        y2 = self.cv2(x)
+        return self.cv4(self.act(self.bn(torch.cat((y1, y2), dim=1))))
+
+
+class BottleneckRepVGG(nn.Module):
+    # Standard bottleneck
+    def __init__(self, c1, c2, shortcut=True, g=1, e=0.5):  # ch_in, ch_out, shortcut, groups, expansion
+        super(BottleneckRepVGG, self).__init__()
+        c_ = int(c2 * e)  # hidden channels
+        self.cv1 = Conv(c1, c_, 1, 1)
+        self.cv2 = RepVGGBlock(c_, c2, 3, 1, groups=g)
+        self.add = shortcut and c1 == c2
+
+    def forward(self, x):
+        return x + self.cv2(self.cv1(x)) if self.add else self.cv2(self.cv1(x))
+
