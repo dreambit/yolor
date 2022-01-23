@@ -12,7 +12,7 @@ import torch
 import torch.nn as nn
 import torch.nn.functional as F
 
-from models.common import Conv, Bottleneck, SPP, SPPCSP, VoVCSP, DWConv, Focus, BottleneckCSP, BottleneckCSPLG, BottleneckCSPSE, BottleneckCSPSAM, BottleneckCSPSEA, BottleneckCSPSAMA, BottleneckCSPSAMB, BottleneckCSPGC, BottleneckCSPDNL, BottleneckCSP2, BottleneckCSP2SAM, Concat, DownC, DownD, DNL, GC, SAM, SAMA, NMS, autoShape, TR, BottleneckCSPTR, BottleneckCSP2TR, SPPCSPTR, ReOrg, BottleneckCSPF, ImplicitA, ImplicitM, DWT, RepVGGBlock, ConvRepVGG, BottleneckCSPRepVGG2, BottleneckCSPFRepVGG, BottleneckRepVGG
+from models.common import Conv, Bottleneck, SPP, SPPCSP, VoVCSP, DWConv, Focus, BottleneckCSP, BottleneckCSPLG, BottleneckCSPSE, BottleneckCSPSAM, BottleneckCSPSEA, BottleneckCSPSAMA, BottleneckCSPSAMB, BottleneckCSPGC, BottleneckCSPDNL, BottleneckCSP2, BottleneckCSP2SAM, Concat, DownC, DownD, DNL, GC, SAM, SAMA, NMS, autoShape, TR, BottleneckCSPTR, BottleneckCSP2TR, SPPCSPTR, ReOrg, BottleneckCSPF, ImplicitA, ImplicitM, DWT, RepVGGBlock, ConvRepVGG, BottleneckCSPRepVGG2, BottleneckCSPRepVGG3, BottleneckCSPFRepVGG, BottleneckCSPFRepVGG2, BottleneckRepVGG
 from models.experimental import MixConv2d, CrossConv, C3
 from utils.autoanchor import check_anchor_order
 from utils.general import make_divisible, check_file, set_logging
@@ -284,7 +284,7 @@ def parse_model(d, ch):  # model_dict, input_channels(3)
                 pass
 
         n = max(round(n * gd), 1) if n > 1 else n  # depth gain
-        if m in [nn.Conv2d, Conv, Bottleneck, SPP, DWConv, MixConv2d, Focus, CrossConv, BottleneckCSP, BottleneckCSPLG, BottleneckCSPSE, BottleneckCSPSAM, BottleneckCSPSEA, BottleneckCSPSAMA, BottleneckCSPSAMB, BottleneckCSPGC, BottleneckCSPDNL, BottleneckCSP2, BottleneckCSP2SAM, SPPCSP, VoVCSP, C3, DownD, DownC, DNL, GC, SAM, SAMA, BottleneckCSPTR, BottleneckCSP2TR, TR, SPPCSPTR, BottleneckCSPF, RepVGGBlock, ConvRepVGG, BottleneckCSPRepVGG2, BottleneckCSPFRepVGG, BottleneckRepVGG]:
+        if m in [nn.Conv2d, Conv, Bottleneck, SPP, DWConv, MixConv2d, Focus, CrossConv, BottleneckCSP, BottleneckCSPLG, BottleneckCSPSE, BottleneckCSPSAM, BottleneckCSPSEA, BottleneckCSPSAMA, BottleneckCSPSAMB, BottleneckCSPGC, BottleneckCSPDNL, BottleneckCSP2, BottleneckCSP2SAM, SPPCSP, VoVCSP, C3, DownD, DownC, DNL, GC, SAM, SAMA, BottleneckCSPTR, BottleneckCSP2TR, TR, SPPCSPTR, BottleneckCSPF, RepVGGBlock, ConvRepVGG, BottleneckCSPRepVGG2, BottleneckCSPRepVGG3, BottleneckCSPFRepVGG, BottleneckCSPFRepVGG2, BottleneckRepVGG]:
             c1, c2 = ch[f if f <= -1 else f + 1], args[0]
 
             # Normal
@@ -306,7 +306,7 @@ def parse_model(d, ch):  # model_dict, input_channels(3)
             #     c2 = make_divisible(c2, 8) if c2 != no else c2
 
             args = [c1, c2, *args[1:]]
-            if m in [BottleneckCSP, BottleneckCSPLG, BottleneckCSPSE, BottleneckCSPSAM, BottleneckCSPSEA, BottleneckCSPSAMA, BottleneckCSPSAMB, BottleneckCSPGC, BottleneckCSPDNL, BottleneckCSP2, BottleneckCSP2SAM, SPPCSP, VoVCSP, C3, DownD, DownC, BottleneckCSPTR, BottleneckCSP2TR, TR, SPPCSPTR, BottleneckCSPF, BottleneckCSPRepVGG2, BottleneckCSPFRepVGG]:
+            if m in [BottleneckCSP, BottleneckCSPLG, BottleneckCSPSE, BottleneckCSPSAM, BottleneckCSPSEA, BottleneckCSPSAMA, BottleneckCSPSAMB, BottleneckCSPGC, BottleneckCSPDNL, BottleneckCSP2, BottleneckCSP2SAM, SPPCSP, VoVCSP, C3, DownD, DownC, BottleneckCSPTR, BottleneckCSP2TR, TR, SPPCSPTR, BottleneckCSPF, BottleneckCSPRepVGG2, BottleneckCSPRepVGG3, BottleneckCSPFRepVGG, BottleneckCSPFRepVGG2]:
                 args.insert(2, n)
                 n = 1
         elif m is nn.BatchNorm2d:
