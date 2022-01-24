@@ -1055,7 +1055,7 @@ class RepVGGBlock(nn.Module):
         #assert kernel_size == 3
         assert padding == 1
 
-        #padding_11 = padding - kernel_size // 2
+        #self.padding_11 = padding - kernel_size // 2
         padding_11 = padding - 3 // 2
 
         self.dense_groups = groups
@@ -1100,13 +1100,16 @@ class RepVGGBlock(nn.Module):
 
         out = self.rbr_dense(inputs)
 
-        if self.rbr_1x1 is not None:
-            out = out + self.rbr_1x1(inputs)
-
         if self.rbr_identity is not None:
             out = out + self.rbr_identity(inputs)
-                 
+
+        if self.rbr_1x1 is not None:
+            out = out + self.rbr_1x1(inputs)
+                            
         return out
+
+    def forward_fused(self, inputs):
+        return self.rbr_dense(inputs)
 
 
     def fuse_conv_bn(self, conv, bn):
@@ -1153,7 +1156,7 @@ class RepVGGBlock(nn.Module):
             return
                 
         self.rbr_dense = self.fuse_conv_bn(self.rbr_dense.conv, self.rbr_dense.bn)
-
+        
         # Fuse self.rbr_1x1
         if isinstance(self.rbr_1x1, nn.Sequential) and isinstance(self.rbr_1x1[0], nn.AvgPool2d): 
             print(f"fuse: rbr_1x1 == Sequential and self.rbr_1x1[0] == AvgPool2d")
@@ -1170,8 +1173,9 @@ class RepVGGBlock(nn.Module):
 
             weight_1x1_expanded = torch.nn.functional.pad(self.rbr_1x1.weight, [1, 1, 1, 1])
 
+        
         # Fuse self.rbr_identity
-        if isinstance(self.rbr_identity, nn.BatchNorm2d) or isinstance(self.rbr_identity, nn.modules.batchnorm.SyncBatchNorm) and (self.stride == 1):
+        if (isinstance(self.rbr_identity, nn.BatchNorm2d) or isinstance(self.rbr_identity, nn.modules.batchnorm.SyncBatchNorm)) and (self.stride == 1):
             print(f"fuse: rbr_identity == BatchNorm2d or SyncBatchNorm, stride = {self.stride}")
             identity_conv_1x1 = nn.Conv2d(
                     in_channels=self.in_channels,
@@ -1181,8 +1185,14 @@ class RepVGGBlock(nn.Module):
                     padding=0,
                     groups=self.groups, 
                     bias=False)
-            identity_conv_1x1.weight = torch.nn.Parameter( torch.ones_like(self.rbr_1x1.weight) )
-            
+            identity_conv_1x1.weight.data = identity_conv_1x1.weight.data.to(self.rbr_1x1.weight.data.device)
+            identity_conv_1x1.weight.data = identity_conv_1x1.weight.data.squeeze().squeeze()
+            print(f" identity_conv_1x1.weight = {identity_conv_1x1.weight.shape}")
+            identity_conv_1x1.weight.data.fill_(0.0)
+            identity_conv_1x1.weight.data.fill_diagonal_(1.0)
+            identity_conv_1x1.weight.data = identity_conv_1x1.weight.data.unsqueeze(2).unsqueeze(3)
+            print(f" identity_conv_1x1.weight = {identity_conv_1x1.weight.shape}")
+
             identity_conv_1x1 = self.fuse_conv_bn(identity_conv_1x1, self.rbr_identity)
             bias_identity_expanded = identity_conv_1x1.bias
             weight_identity_expanded = torch.nn.functional.pad(identity_conv_1x1.weight, [1, 1, 1, 1])            
@@ -1190,6 +1200,7 @@ class RepVGGBlock(nn.Module):
             print(f"fuse: rbr_identity != BatchNorm2d, stride = {self.stride}, rbr_identity = {self.rbr_identity}")
             bias_identity_expanded = torch.nn.Parameter( torch.zeros_like(rbr_1x1_bias) )
             weight_identity_expanded = torch.nn.Parameter( torch.zeros_like(weight_1x1_expanded) )            
+        
 
         #print(f"self.rbr_1x1.weight = {self.rbr_1x1.weight.shape}, ")
         #print(f"weight_1x1_expanded = {weight_1x1_expanded.shape}, ")
@@ -1197,8 +1208,7 @@ class RepVGGBlock(nn.Module):
 
         self.rbr_dense.weight = torch.nn.Parameter(self.rbr_dense.weight + weight_1x1_expanded + weight_identity_expanded)
         self.rbr_dense.bias = torch.nn.Parameter(self.rbr_dense.bias + rbr_1x1_bias + bias_identity_expanded)
-
-        
+                
         if self.rbr_identity is not None:
             del self.rbr_identity
             self.rbr_identity = None
@@ -1207,6 +1217,8 @@ class RepVGGBlock(nn.Module):
             del self.rbr_1x1
             self.rbr_1x1 = None
                       
+        self.forward = self.forward_fused
+
         self.dummy_fused = True
 
 
