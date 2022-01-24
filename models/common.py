@@ -1036,7 +1036,7 @@ class RepVGGBlock(nn.Module):
 
     def __init__(self, in_channels, out_channels, kernel_size,
                  stride=1, padding=0, dilation=1, groups=1,
-                 padding_mode='zeros', dummy_fused=False):
+                 padding_mode='zeros', avg_pool=True):
         super().__init__()
 
         self.groups = groups
@@ -1046,7 +1046,7 @@ class RepVGGBlock(nn.Module):
         self.out_channels = out_channels
         self.padding = padding
         self.padding_mode = padding_mode
-        self.dummy_fused = dummy_fused
+        self.dummy_fused = False
 
         #print(f" in_channels = {in_channels}, out_channels = {out_channels}, kernel_size = {kernel_size}, \
         #    stride = {stride}, padding = {padding}, dilation = {dilation}, groups = {groups}, \
@@ -1059,70 +1059,44 @@ class RepVGGBlock(nn.Module):
         padding_11 = padding - 3 // 2
 
         self.dense_groups = groups
+        
+        self.rbr_identity = nn.BatchNorm2d(
+            num_features=in_channels) if (
+                out_channels == in_channels and
+                stride == 1) else None
 
+        self.rbr_dense = conv_bn(
+            in_channels=in_channels,
+            out_channels=out_channels,
+            kernel_size=3,
+            stride=stride,
+            padding=padding,
+            groups=self.dense_groups) if (kernel_size != 1) else None
 
-        if not dummy_fused:
-            self.rbr_identity = nn.BatchNorm2d(
-                num_features=in_channels) if (
-                    out_channels == in_channels and
-                    stride == 1) else None
-            self.rbr_dense = conv_bn(
-                in_channels=in_channels,
-                out_channels=out_channels,
-                kernel_size=3,
-                stride=stride,
-                padding=padding,
-                groups=self.dense_groups) if (kernel_size != 1) else None
-            self.rbr_1x1 = conv_bn(
-                in_channels=in_channels,
-                out_channels=out_channels,
-                kernel_size=1,
-                stride=stride,
-                padding=padding_11,
-                groups=groups)
-        else:
-            self.rbr_dense = nn.Conv2d(
-                in_channels=in_channels,
-                out_channels=out_channels,
-                kernel_size=kernel_size,
-                stride=stride,
-                padding=padding if (kernel_size != 1) else 0,
-                groups=groups, bias=True)
-            self.rbr_identity = None
+        self.rbr_1x1 = conv_bn(
+            in_channels=in_channels,
+            out_channels=out_channels,
+            kernel_size=1,
+            stride=stride,
+            padding=padding_11,
+            groups=groups)
 
-
-        num_additional_kernels = max((kernel_size-3) // 2, 0)
-        self.additional_kernels = nn.ModuleList()
-        for i in range(num_additional_kernels):
-            ksize = 5 + i*2
-            pad = dilation*(ksize-1)//2
-            mixconv = conv_bn(
-                in_channels=in_channels, out_channels=out_channels,
-                kernel_size=ksize, stride=stride, padding=pad,
-                groups=self.dense_groups)
-            self.additional_kernels.append(mixconv)
+        if stride == 2 and avg_pool:
+            self.rbr_1x1 = nn.Sequential(
+                nn.AvgPool2d(2, 2),
+                self.rbr_1x1
+            )
 
 
     def forward(self, inputs):
 
-        if self.rbr_identity is None:
-            id_out = 0
-        else:
-            id_out = self.rbr_identity(inputs)
-
         if not self.dummy_fused:
-            rbr_1x1_output = self.rbr_1x1(inputs)
+            if self.stride != 1:
+                out = self.rbr_dense(inputs) + self.rbr_1x1(inputs)
+            else:
+                out = self.rbr_dense(inputs) + self.rbr_1x1(inputs) + self.rbr_identity(inputs)
         else:
-            rbr_1x1_output = None
-
-        dense_output = self.rbr_dense(inputs)
-
-        if not self.dummy_fused:
-            out = dense_output + rbr_1x1_output + id_out
-        elif self.rbr_identity is not None:
-            out = dense_output + id_out
-        else:
-            out = dense_output
+            out = self.rbr_dense(inputs)
 
         return out
 
@@ -1173,6 +1147,7 @@ class RepVGGBlock(nn.Module):
         self.rbr_dense = self.fuse_conv_bn(self.rbr_dense.conv, self.rbr_dense.bn)
 
         if isinstance(self.rbr_1x1, nn.Sequential) and isinstance(self.rbr_1x1[0], nn.AvgPool2d): 
+            print(f"fuse: rbr_1x1 == Sequential and self.rbr_1x1[0] == AvgPool2d")
             self.rbr_1x1[1] = self.fuse_conv_bn(self.rbr_1x1[1].conv, self.rbr_1x1[1].bn)
             rbr_1x1_bias = self.rbr_1x1[1].bias
 
@@ -1180,12 +1155,14 @@ class RepVGGBlock(nn.Module):
             weight_1x1_expanded = weight_1x1_expanded / 4
             weight_1x1_expanded = torch.nn.functional.pad(weight_1x1_expanded, [1, 0, 1, 0])
         else:
+            print(f"fuse: rbr_1x1 != Sequential or self.rbr_1x1[0] != AvgPool2d")
             self.rbr_1x1 = self.fuse_conv_bn(self.rbr_1x1.conv, self.rbr_1x1.bn)
             rbr_1x1_bias = self.rbr_1x1.bias
 
             weight_1x1_expanded = torch.nn.functional.pad(self.rbr_1x1.weight, [1, 1, 1, 1])
 
-        if isinstance(self.rbr_identity, nn.BatchNorm2d) and (self.stride == 1):
+        if isinstance(self.rbr_identity, nn.BatchNorm2d) or isinstance(self.rbr_identity, nn.modules.batchnorm.SyncBatchNorm) and (self.stride == 1):
+            print(f"fuse: rbr_identity == BatchNorm2d or SyncBatchNorm, stride = {self.stride}")
             identity_conv_1x1 = nn.Conv2d(
                     in_channels=self.in_channels,
                     out_channels=self.out_channels,
@@ -1201,6 +1178,7 @@ class RepVGGBlock(nn.Module):
             weight_identity_expanded = torch.nn.functional.pad(identity_conv_1x1.weight, [1, 1, 1, 1])
             self.rbr_identity = None
         else:
+            print(f"fuse: rbr_identity != BatchNorm2d, stride = {self.stride}, rbr_identity = {self.rbr_identity}")
             bias_identity_expanded = torch.nn.Parameter( torch.zeros_like(rbr_1x1_bias) )
             weight_identity_expanded = torch.nn.Parameter( torch.zeros_like(weight_1x1_expanded) )            
 
