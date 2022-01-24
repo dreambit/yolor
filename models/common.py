@@ -1079,12 +1079,20 @@ class RepVGGBlock(nn.Module):
             kernel_size=1,
             stride=stride,
             padding=padding_11,
-            groups=groups)
+            groups=groups
+        )
 
         if stride == 2 and avg_pool:
             self.rbr_1x1 = nn.Sequential(
                 nn.AvgPool2d(2, 2),
-                self.rbr_1x1
+                conv_bn(
+                    in_channels=in_channels,
+                    out_channels=out_channels,
+                    kernel_size=1,
+                    stride=1,
+                    padding=padding_11,
+                    groups=groups
+                )
             )
 
 
