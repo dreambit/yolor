@@ -1090,14 +1090,14 @@ class RepVGGBlock(nn.Module):
 
     def forward(self, inputs):
 
-        if not self.dummy_fused:
-            if self.stride != 1:
-                out = self.rbr_dense(inputs) + self.rbr_1x1(inputs)
-            else:
-                out = self.rbr_dense(inputs) + self.rbr_1x1(inputs) + self.rbr_identity(inputs)
-        else:
-            out = self.rbr_dense(inputs)
+        out = self.rbr_dense(inputs)
 
+        if self.rbr_1x1 is not None:
+            out = out + self.rbr_1x1(inputs)
+
+        if self.rbr_identity is not None:
+            out = out + self.rbr_identity(inputs)
+                 
         return out
 
 
@@ -1146,6 +1146,7 @@ class RepVGGBlock(nn.Module):
                 
         self.rbr_dense = self.fuse_conv_bn(self.rbr_dense.conv, self.rbr_dense.bn)
 
+        # Fuse self.rbr_1x1
         if isinstance(self.rbr_1x1, nn.Sequential) and isinstance(self.rbr_1x1[0], nn.AvgPool2d): 
             print(f"fuse: rbr_1x1 == Sequential and self.rbr_1x1[0] == AvgPool2d")
             self.rbr_1x1[1] = self.fuse_conv_bn(self.rbr_1x1[1].conv, self.rbr_1x1[1].bn)
@@ -1161,6 +1162,7 @@ class RepVGGBlock(nn.Module):
 
             weight_1x1_expanded = torch.nn.functional.pad(self.rbr_1x1.weight, [1, 1, 1, 1])
 
+        # Fuse self.rbr_identity
         if isinstance(self.rbr_identity, nn.BatchNorm2d) or isinstance(self.rbr_identity, nn.modules.batchnorm.SyncBatchNorm) and (self.stride == 1):
             print(f"fuse: rbr_identity == BatchNorm2d or SyncBatchNorm, stride = {self.stride}")
             identity_conv_1x1 = nn.Conv2d(
@@ -1175,8 +1177,7 @@ class RepVGGBlock(nn.Module):
             
             identity_conv_1x1 = self.fuse_conv_bn(identity_conv_1x1, self.rbr_identity)
             bias_identity_expanded = identity_conv_1x1.bias
-            weight_identity_expanded = torch.nn.functional.pad(identity_conv_1x1.weight, [1, 1, 1, 1])
-            self.rbr_identity = None
+            weight_identity_expanded = torch.nn.functional.pad(identity_conv_1x1.weight, [1, 1, 1, 1])            
         else:
             print(f"fuse: rbr_identity != BatchNorm2d, stride = {self.stride}, rbr_identity = {self.rbr_identity}")
             bias_identity_expanded = torch.nn.Parameter( torch.zeros_like(rbr_1x1_bias) )
@@ -1189,8 +1190,15 @@ class RepVGGBlock(nn.Module):
         self.rbr_dense.weight = torch.nn.Parameter(self.rbr_dense.weight + weight_1x1_expanded + weight_identity_expanded)
         self.rbr_dense.bias = torch.nn.Parameter(self.rbr_dense.bias + rbr_1x1_bias + bias_identity_expanded)
 
-        self.rbr_1x1 = nn.Identity()
-                       
+        
+        if self.rbr_identity is not None:
+            del self.rbr_identity
+            self.rbr_identity = None
+
+        if self.rbr_1x1 is not None:
+            del self.rbr_1x1
+            self.rbr_1x1 = None
+                      
         self.dummy_fused = True
 
 
