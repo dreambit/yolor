@@ -62,13 +62,14 @@ class FocalLoss(nn.Module):
 def compute_loss(p, targets, model):  # predictions, targets, model
     device = targets.device
     #print(device)
-    lcls, lbox, lobj = torch.zeros(1, device=device), torch.zeros(1, device=device), torch.zeros(1, device=device)
-    tcls, tbox, indices, anchors = build_targets(p, targets, model)  # targets
+    lcls, lbox, langle, lobj = torch.zeros(1, device=device), torch.zeros(1, device=device), torch.zeros(1, device=device), torch.zeros(1, device=device)
+    tcls, tbox, tangle, indices, anchors = build_targets(p, targets, model)  # targets
     h = model.hyp  # hyperparameters
 
     # Define criteria
     BCEcls = nn.BCEWithLogitsLoss(pos_weight=torch.Tensor([h['cls_pw']])).to(device)
     BCEobj = nn.BCEWithLogitsLoss(pos_weight=torch.Tensor([h['obj_pw']])).to(device)
+    MSEangle = nn.MSELoss().to(device)
 
     # Class label smoothing https://arxiv.org/pdf/1902.04103.pdf eqn 3
     cp, cn = smooth_BCE(eps=0.0)
@@ -88,40 +89,53 @@ def compute_loss(p, targets, model):  # predictions, targets, model
         b, a, gj, gi = indices[i]  # image, anchor, gridy, gridx
         tobj = torch.zeros_like(pi[..., 0], device=device)  # target obj
 
+        obj_idx = 5 if tangle[i] is not None else 4
         n = b.shape[0]  # number of targets
         if n:
             nt += n  # cumulative targets
             ps = pi[b, a, gj, gi]  # prediction subset corresponding to targets
 
+            #print(f"\n i = {i}, ps = {ps.shape}, pi = {pi.shape}, tobj = {tobj.shape}, no = len(p) = {no}, anchors[i] = {anchors[i].shape}, anchors = {len(anchors)}")
             # Regression
             pxy = ps[:, :2].sigmoid() * 2. - 0.5
             pwh = (ps[:, 2:4].sigmoid() * 2) ** 2 * anchors[i]
             pbox = torch.cat((pxy, pwh), 1).to(device)  # predicted box
             iou = bbox_iou(pbox.T, tbox[i], x1y1x2y2=False, CIoU=True)  # iou(prediction, target)
-            lbox += (1.0 - iou).mean()  # iou loss
+            lbox += (1.0 - iou).mean()  # iou loss           
+
+            if tangle[i] is not None:
+                pangle = ps[:, 4].to(device).sigmoid() * 4.0 - 2.0
+                #print(f" ps = {ps.shape}, pxy = {pxy.shape}, pwh = {pwh.shape}, pbox = {pbox.shape}, iou = {iou.shape}, tbox[i] = {tbox[i].shape} ")
+                #print(f" ps = {ps.shape}, tangle[i] = {tangle[i].shape}, pangle = {pangle.shape}")
+                langle += MSEangle(pangle, tangle[i]) 
+                #print(f" langle = {langle}")
+                #print(f"\n tangle[i] = {tangle[i]}")
+                #print(f"\n pangle = {pangle}")
 
             # Objectness
             tobj[b, a, gj, gi] = (1.0 - model.gr) + model.gr * iou.detach().clamp(0).type(tobj.dtype)  # iou ratio
 
             # Classification
             if model.nc > 1:  # cls loss (only if multiple classes)
-                t = torch.full_like(ps[:, 5:], cn, device=device)  # targets
+                t = torch.full_like(ps[:, (1+obj_idx):], cn, device=device)  # targets
                 t[range(n), tcls[i]] = cp
-                lcls += BCEcls(ps[:, 5:], t)  # BCE
+                lcls += BCEcls(ps[:, (1+obj_idx):], t)  # BCE
 
             # Append targets to text file
             # with open('targets.txt', 'a') as file:
             #     [file.write('%11.5g ' * 4 % tuple(x) + '\n') for x in torch.cat((txy[i], twh[i]), 1)]
 
-        lobj += BCEobj(pi[..., 4], tobj) * balance[i]  # obj loss
+        lobj += BCEobj(pi[..., obj_idx], tobj) * balance[i]  # obj loss
 
     s = 3 / no  # output count scaling
+    langle *= (h['rot'] * s) if 'rot' in h else 1.0
     lbox *= h['box'] * s
     lobj *= h['obj'] * s * (1.4 if no >= 4 else 1.)
     lcls *= h['cls'] * s
     bs = tobj.shape[0]  # batch size
 
-    loss = lbox + lobj + lcls
+    loss = lbox + lobj + lcls + langle
+    #print(f" loss = {loss}, lbox = {lbox}, lobj = {lobj}, lcls = {lcls}, langle = {langle} ")
     return loss * bs, torch.cat((lbox, lobj, lcls, loss)).detach()
 
 
@@ -129,10 +143,15 @@ def build_targets(p, targets, model):
     # Build targets for compute_loss(), input targets(image,class,x,y,w,h)
     det = model.module.model[-1] if is_parallel(model) else model.model[-1]  # Detect() module
     na, nt = det.na, targets.shape[0]  # number of anchors, targets
-    tcls, tbox, indices, anch = [], [], [], []
-    gain = torch.ones(7, device=targets.device)  # normalized to gridspace gain
+    tcls, tbox, tangle, indices, anch = [], [], [], [], []
+    gain_count = targets.shape[1] + 1
+
+    gain = torch.ones(gain_count, device=targets.device)  # normalized to gridspace gain
     ai = torch.arange(na, device=targets.device).float().view(na, 1).repeat(1, nt)  # same as .repeat_interleave(nt)
+    
+    #print(f" init targets = {targets.shape} ")
     targets = torch.cat((targets.repeat(na, 1, 1), ai[:, :, None]), 2)  # append anchor indices
+    #print(f" cat targets = {targets.shape} ")
 
     g = 0.5  # bias
     off = torch.tensor([[0, 0],
@@ -146,12 +165,15 @@ def build_targets(p, targets, model):
 
         # Match targets to anchors
         t = targets * gain
+        #print(f" 1 t = {t.shape}, targets = {targets.shape}, gain = {gain.shape}")
         if nt:
             # Matches
             r = t[:, :, 4:6] / anchors[:, None]  # wh ratio
             j = torch.max(r, 1. / r).max(2)[0] < model.hyp['anchor_t']  # compare
             # j = wh_iou(anchors, t[:, 4:6]) > model.hyp['iou_t']  # iou(3,n)=wh_iou(anchors(3,2), gwh(n,2))
+            #print(f" 2 t = {t.shape}")
             t = t[j]  # filter
+            #print(f" 3 t = {t.shape}")
 
             # Offsets
             gxy = t[:, 2:4]  # grid xy
@@ -173,10 +195,19 @@ def build_targets(p, targets, model):
         gi, gj = gij.T  # grid xy indices
 
         # Append
-        a = t[:, 6].long()  # anchor indices
+        #print(f" 4 t = {t.shape}")
+        if t.shape[1] > 7:
+            angle = t[:, 6]
+            #print(f" angle = {angle.shape}, gxy = {gxy.shape}, gwh = {gwh.shape}")
+            a = t[:, 7].long()  # anchor indices
+        else:
+            angle = None
+            a = t[:, 6].long()  # anchor indices
+
         indices.append((b, a, gj.clamp_(0, gain[3] - 1), gi.clamp_(0, gain[2] - 1)))  # image, anchor, grid indices
         tbox.append(torch.cat((gxy - gij, gwh), 1))  # box
         anch.append(anchors[a])  # anchors
         tcls.append(c)  # class
+        tangle.append(angle)
 
-    return tcls, tbox, indices, anch
+    return tcls, tbox, tangle, indices, anch

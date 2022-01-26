@@ -394,6 +394,7 @@ class LoadImagesAndLabels(Dataset):  # for training/testing
         self.label_files = img2label_paths(self.img_files)  # labels
         cache_path = str(Path(self.label_files[0]).parent) + '.cache3'  # cached labels
         if os.path.isfile(cache_path):
+            print(f"\n\n\n cache_path = {cache_path}")
             cache = torch.load(cache_path)  # load
             if cache['hash'] != get_hash(self.label_files + self.img_files):  # dataset changed
                 cache = self.cache_labels(cache_path)  # re-cache
@@ -447,9 +448,14 @@ class LoadImagesAndLabels(Dataset):  # for training/testing
         for i, file in pbar:
             l = self.labels[i]  # label
             if l is not None and l.shape[0]:
-                assert l.shape[1] == 5, '> 5 label columns: %s' % file
-                assert (l >= 0).all(), 'negative labels: %s' % file
-                assert (l[:, 1:] <= 1).all(), 'non-normalized or out of bounds coordinate labels: %s' % file
+                #print(f"\n Labels l.shape = {l.shape}")
+                if l.shape[1] == 6:
+                    assert (l[:, 1:] <= 1).all(), 'non-normalized or out of bounds coordinate labels: %s' % file
+                    assert (l[:, 1:] >= -1).all(), 'non-normalized or out of bounds coordinate labels: %s' % file
+                else:
+                    assert l.shape[1] == 5, '> 5 label columns: %s' % file
+                    assert (l >= 0).all(), 'negative labels: %s' % file
+                    assert (l[:, 1:] <= 1).all(), 'non-normalized or out of bounds coordinate labels: %s' % file
                 if np.unique(l, axis=0).shape[0] < l.shape[0]:  # duplicate rows
                     nd += 1  # print('WARNING: duplicate rows in %s' % self.label_files[i])  # duplicate rows
                 if single_cls:
@@ -525,6 +531,7 @@ class LoadImagesAndLabels(Dataset):  # for training/testing
                 if os.path.isfile(label):
                     with open(label, 'r') as f:
                         l = np.array([x.split() for x in f.read().splitlines()], dtype=np.float32)  # labels
+                #print(f"\n\n\n l = {l}, label = {label}")
                 if len(l) == 0:
                     l = np.zeros((0, 5), dtype=np.float32)
                 x[img] = [l, shape]
@@ -620,7 +627,9 @@ class LoadImagesAndLabels(Dataset):  # for training/testing
                 if nL:
                     labels[:, 1] = 1 - labels[:, 1]
 
-        labels_out = torch.zeros((nL, 6))
+        label_fields = labels.shape[1]  # 5 for (cls,x,y,w,h) and 6 for (cls,x,y,w,h,angle)
+
+        labels_out = torch.zeros((nL, label_fields+1))
         if nL:
             labels_out[:, 1:] = torch.from_numpy(labels)
 
