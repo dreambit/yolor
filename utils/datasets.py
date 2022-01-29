@@ -366,6 +366,7 @@ class LoadImagesAndLabels(Dataset):  # for training/testing
         self.mosaic = self.augment and not self.rect  # load 4 images at a time into a mosaic (only during training)
         self.mosaic_border = [-img_size // 2, -img_size // 2]
         self.stride = stride
+        self.label_fields = 5
 
         def img2label_paths(img_paths):
             # Define label paths as a function of image paths
@@ -449,6 +450,7 @@ class LoadImagesAndLabels(Dataset):  # for training/testing
             l = self.labels[i]  # label
             if l is not None and l.shape[0]:
                 #print(f"\n Labels l.shape = {l.shape}")
+                self.label_fields = l.shape[1]
                 if l.shape[1] == 6:
                     assert (l[:, 1:] <= 1).all(), 'non-normalized or out of bounds coordinate labels: %s' % file
                     assert (l[:, 1:] >= -1).all(), 'non-normalized or out of bounds coordinate labels: %s' % file
@@ -627,9 +629,7 @@ class LoadImagesAndLabels(Dataset):  # for training/testing
                 if nL:
                     labels[:, 1] = 1 - labels[:, 1]
 
-        label_fields = labels.shape[1]  # 5 for (cls,x,y,w,h) and 6 for (cls,x,y,w,h,angle)
-
-        labels_out = torch.zeros((nL, label_fields+1))
+        labels_out = torch.zeros((nL, self.label_fields+1))
         if nL:
             labels_out[:, 1:] = torch.from_numpy(labels)
 
