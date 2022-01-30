@@ -253,8 +253,10 @@ def test(data,
                 loss += compute_loss([x.float() for x in train_out], targets, model)[1][:3]  # box, obj, cls
 
             # Run NMS
+            if not hasattr(model, 'rotated'):
+                model.rotated = False
             t = time_synchronized()
-            output = non_max_suppression(inf_out, conf_thres=conf_thres, iou_thres=iou_thres)
+            output = non_max_suppression(inf_out, conf_thres=conf_thres, iou_thres=iou_thres, rotated=model.rotated)
             t1 += time_synchronized() - t
 
         # Statistics per image
@@ -269,15 +271,19 @@ def test(data,
                     stats.append((torch.zeros(0, niou, dtype=torch.bool), torch.Tensor(), torch.Tensor(), tcls))
                 continue
 
+            if pred.shape[1] == 6:
+                zero_angles = torch.zeros((pred.shape[0], 1), device=pred.device)
+                pred = torch.cat((pred, zero_angles), dim=1)
+
             # Append to text file
             path = Path(paths[si])
             if save_txt:
                 gn = torch.tensor(shapes[si][0])[[1, 0, 1, 0]]  # normalization gain whwh
                 x = pred.clone()
                 x[:, :4] = scale_coords(img[si].shape[1:], x[:, :4], shapes[si][0], shapes[si][1])  # to original
-                for *xyxy, conf, cls in x:
+                for *xyxy, conf, cls, angle in x:
                     xywh = (xyxy2xywh(torch.tensor(xyxy).view(1, 4)) / gn).view(-1).tolist()  # normalized xywh
-                    line = (cls, *xywh, conf) if save_conf else (cls, *xywh)  # label format
+                    line = (cls, *xywh, conf, angle) if save_conf else (cls, *xywh, angle)  # label format
                     with open(save_dir / 'labels' / (path.stem + '.txt'), 'a') as f:
                         f.write(('%g ' * len(line)).rstrip() % line + '\n')
 

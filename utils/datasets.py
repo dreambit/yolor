@@ -633,6 +633,11 @@ class LoadImagesAndLabels(Dataset):  # for training/testing
         if nL:
             labels_out[:, 1:] = torch.from_numpy(labels)
 
+        # fake zero angles
+        #if self.label_fields == 5:
+        #    zero_angles = torch.zeros((labels_out.shape[0], 1), device=labels_out.device).fill_(0.3)
+        #    labels_out = torch.cat((labels_out, zero_angles), dim=1)
+
         # Convert
         img = img[:, :, ::-1].transpose(2, 0, 1)  # BGR to RGB, to 3x416x416
         img = np.ascontiguousarray(img)

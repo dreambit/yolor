@@ -143,6 +143,11 @@ class Model(nn.Module):
         self.model, self.save = parse_model(deepcopy(self.yaml), ch=[ch])  # model, savelist, ch_out
         # print([x.shape for x in self.forward(torch.zeros(1, ch, 64, 64))])
 
+        self.rotated = False
+        if 'rotated' in self.yaml:
+            self.rotated = self.yaml['rotated']
+        print(f" cfg: rotated = {self.rotated}")
+
         # Build strides, anchors
         m = self.model[-1]  # Detect()
         if isinstance(m, Detect):

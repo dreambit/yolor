@@ -262,15 +262,18 @@ def wh_iou(wh1, wh2):
     return inter / (wh1.prod(2) + wh2.prod(2) - inter)  # iou = inter / (area1 + area2 - inter)
 
 
-def non_max_suppression(prediction, conf_thres=0.1, iou_thres=0.6, merge=False, classes=None, agnostic=False):
+def non_max_suppression(prediction, conf_thres=0.1, iou_thres=0.6, merge=False, classes=None, agnostic=False, rotated=False):
     """Performs Non-Maximum Suppression (NMS) on inference results
 
     Returns:
          detections with shape: nx6 (x1, y1, x2, y2, conf, cls)
     """
 
-    nc = prediction[0].shape[1] - 5  # number of classes
-    xc = prediction[..., 4] > conf_thres  # candidates
+    obj_idx = 5 if rotated else 4
+    #print(f" rotated = {rotated}, obj_idx = {obj_idx} ")
+    nc = prediction[0].shape[1] - (obj_idx+1)  # number of classes
+    xc = prediction[..., obj_idx] > conf_thres  # candidates
+    #print(f"\n\n prediction = {prediction.shape}, prediction[0].shape = {prediction[0].shape}, prediction.shape[0] = {prediction.shape[0]}, nc = {nc}, xc = {xc} \n")
 
     # Settings
     min_wh, max_wh = 2, 4096  # (pixels) minimum and maximum box width and height
@@ -280,34 +283,41 @@ def non_max_suppression(prediction, conf_thres=0.1, iou_thres=0.6, merge=False, 
     multi_label = nc > 1  # multiple labels per box (adds 0.5ms/img)
 
     t = time.time()
-    output = [torch.zeros(0, 6)] * prediction.shape[0]
+    output = [torch.zeros(0, (obj_idx+2))] * prediction.shape[0]
     for xi, x in enumerate(prediction):  # image index, image inference
         # Apply constraints
         # x[((x[..., 2:4] < min_wh) | (x[..., 2:4] > max_wh)).any(1), 4] = 0  # width-height
         x = x[xc[xi]]  # confidence
-
+        #print(f" x = {x.shape}") 
+        #print(f" x[:,:6] = {x[:,:6]} ")
         # If none remain process next image
         if not x.shape[0]:
             continue
 
         # Compute conf
-        x[:, 5:] *= x[:, 4:5]  # conf = obj_conf * cls_conf
+        x[:, (obj_idx+1):] *= x[:, (obj_idx):(obj_idx+1)]  # conf = obj_conf * cls_conf
 
         # Box (center x, center y, width, height) to (x1, y1, x2, y2)
         box = xywh2xyxy(x[:, :4])
 
         # Detections matrix nx6 (xyxy, conf, cls)
         if multi_label:
-            i, j = (x[:, 5:] > conf_thres).nonzero(as_tuple=False).T
-            x = torch.cat((box[i], x[i, j + 5, None], j[:, None].float()), 1)
+            i, j = (x[:, (obj_idx+1):] > conf_thres).nonzero(as_tuple=False).T
+            if rotated:
+                x = torch.cat((box[i], x[i, j + (obj_idx+1), None], j[:, None].float(), x[i, 4, None]), 1)
+                #print(f"x1 = {x}")
+            else:
+                x = torch.cat((box[i], x[i, j + (obj_idx+1), None], j[:, None].float()), 1)
+            #print(f"x2 = {x.shape}")
         else:  # best class only
-            conf, j = x[:, 5:].max(1, keepdim=True)
+            conf, j = x[:, (obj_idx+1):].max(1, keepdim=True)
             x = torch.cat((box, conf, j.float()), 1)[conf.view(-1) > conf_thres]
 
         # Filter by class
         if classes:
-            x = x[(x[:, 5:6] == torch.tensor(classes, device=x.device)).any(1)]
-
+            x = x[(x[:, (obj_idx+1):(obj_idx+2)] == torch.tensor(classes, device=x.device)).any(1)]
+        
+        #print(f"x3 = {x.shape}")
         # Apply finite constraint
         # if not torch.isfinite(x).all():
         #     x = x[torch.isfinite(x).all(1)]
@@ -321,7 +331,7 @@ def non_max_suppression(prediction, conf_thres=0.1, iou_thres=0.6, merge=False, 
         # x = x[x[:, 4].argsort(descending=True)]
 
         # Batched NMS
-        c = x[:, 5:6] * (0 if agnostic else max_wh)  # classes
+        c = x[:, (obj_idx+1):(obj_idx+2)] * (0 if agnostic else max_wh)  # classes
         boxes, scores = x[:, :4] + c, x[:, 4]  # boxes (offset by class), scores
         i = torch.ops.torchvision.nms(boxes, scores, iou_thres)
         if i.shape[0] > max_det:  # limit detections
@@ -334,10 +344,12 @@ def non_max_suppression(prediction, conf_thres=0.1, iou_thres=0.6, merge=False, 
             if redundant:
                 i = i[iou.sum(1) > 1]  # require redundancy
 
+        #print(f" len(output) = {len(output)}, output[xi] = {output[xi].shape}, x = {x.shape}")
         output[xi] = x[i]
         if (time.time() - t) > time_limit:
             break  # time limit exceeded
 
+    #print(f"\n len(output) = {len(output)}, output[0] = {output[0].shape} \n")
     return output
 
 
