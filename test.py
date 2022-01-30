@@ -292,8 +292,9 @@ def test(data,
                 box_data = [{"position": {"minX": xyxy[0], "minY": xyxy[1], "maxX": xyxy[2], "maxY": xyxy[3]},
                              "class_id": int(cls),
                              "box_caption": "%s %.3f" % (names[cls], conf),
+                             "angle": angle,
                              "scores": {"class_score": conf},
-                             "domain": "pixel"} for *xyxy, conf, cls in pred.tolist()]
+                             "domain": "pixel"} for *xyxy, conf, cls, angle in pred.tolist()]
                 boxes = {"predictions": {"box_data": box_data, "class_labels": names}}
                 wandb_images.append(wandb.Image(img[si], boxes=boxes, caption=path.name))
 
@@ -312,6 +313,7 @@ def test(data,
                     jdict.append({'image_id': image_id,
                                   'category_id': coco91class[int(p[5])] if is_coco else int(p[5]),
                                   'bbox': [round(x, 3) for x in b],
+                                  'angle': round(p[6], 5)
                                   'score': round(p[4], 5)})
 
             # Assign all predictions as incorrect

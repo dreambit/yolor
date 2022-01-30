@@ -128,7 +128,7 @@ def compute_loss(p, targets, model):  # predictions, targets, model
         lobj += BCEobj(pi[..., obj_idx], tobj) * balance[i]  # obj loss
 
     s = 3 / no  # output count scaling
-    langle *= (h['rot'] * s) if 'rot' in h else 1.0
+    langle *= (h['rot'] * s) if 'rot' in h else 0.02
     lbox *= h['box'] * s
     lobj *= h['obj'] * s * (1.4 if no >= 4 else 1.)
     lcls *= h['cls'] * s

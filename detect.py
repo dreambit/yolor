@@ -11,7 +11,7 @@ from models.experimental import attempt_load
 from utils.datasets import LoadStreams, LoadImages
 from utils.general import check_img_size, non_max_suppression, apply_classifier, scale_coords, xyxy2xywh, \
     strip_optimizer, set_logging, increment_path
-from utils.plots import plot_one_box
+from utils.plots import plot_one_box, plot_one_rotated_box
 from utils.torch_utils import select_device, load_classifier, time_synchronized
 
 
@@ -96,7 +96,7 @@ def detect(save_img=False):
                 det[:, :4] = scale_coords(img.shape[2:], det[:, :4], im0.shape).round()
 
                 if det.shape[1] == 6:
-                    zero_angles = torch.zeros((det.shape[0], 1), device=det.device)
+                    zero_angles = torch.zeros((det.shape[0], 1), device=det.device).fill_(0.0)
                     det = torch.cat((det, zero_angles), dim=1)
                 #print(f" det = {det}")
 
@@ -115,7 +115,9 @@ def detect(save_img=False):
 
                     if save_img or view_img:  # Add bbox to image
                         label = '%s %.2f %.2f' % (names[int(cls)], conf, angle)
-                        plot_one_box(xyxy, im0, label=label, color=colors[int(cls)], line_thickness=3)
+                        #plot_one_box(xyxy, im0, label=label, color=colors[int(cls)], line_thickness=3)
+                        #xywh = xyxy2xywh(torch.tensor(xyxy).view(1, 4))
+                        plot_one_rotated_box(xyxy, angle, im0, label=label, color=colors[int(cls)], line_thickness=2)
 
             # Print time (inference + NMS)
             print('%sDone. (%.3fs)' % (s, t2 - t1))

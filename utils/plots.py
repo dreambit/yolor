@@ -65,6 +65,58 @@ def plot_one_box(x, img, color=None, label=None, line_thickness=None):
         cv2.putText(img, label, (c1[0], c1[1] - 2), 0, tl / 3, [225, 255, 255], thickness=tf, lineType=cv2.LINE_AA)
 
 
+# Refer: https://github.com/ghimiredhikura/Complex-YOLOv3
+# bev image coordinates format
+def get_corners(x, y, w, l, yaw):
+    bev_corners = np.zeros((4, 2), dtype=np.float32)
+    cos_yaw = np.cos(yaw)
+    sin_yaw = np.sin(yaw)
+    # front left
+    bev_corners[0, 0] = x - w / 2 * cos_yaw - l / 2 * sin_yaw
+    bev_corners[0, 1] = y - w / 2 * sin_yaw + l / 2 * cos_yaw
+
+    # rear left
+    bev_corners[1, 0] = x - w / 2 * cos_yaw + l / 2 * sin_yaw
+    bev_corners[1, 1] = y - w / 2 * sin_yaw - l / 2 * cos_yaw
+
+    # rear right
+    bev_corners[2, 0] = x + w / 2 * cos_yaw + l / 2 * sin_yaw
+    bev_corners[2, 1] = y + w / 2 * sin_yaw - l / 2 * cos_yaw
+
+    # front right
+    bev_corners[3, 0] = x + w / 2 * cos_yaw - l / 2 * sin_yaw
+    bev_corners[3, 1] = y + w / 2 * sin_yaw + l / 2 * cos_yaw
+
+    return bev_corners
+
+    
+# draw rotated bounding box (x,y,w,h, angle, color)
+def drawRotatedBox(img, x, y, w, l, yaw, color):
+    bev_corners = get_corners(x, y, w, l, yaw)
+    corners_int = bev_corners.reshape(-1, 1, 2).astype(int)
+    cv2.polylines(img, [corners_int], True, color, 2)
+    corners_int = bev_corners.reshape(-1, 2)
+    cv2.line(img, (corners_int[0, 0], corners_int[0, 1]), (corners_int[3, 0], corners_int[3, 1]), (255, 255, 0), 2)
+
+
+def plot_one_rotated_box(x, angle, img, color=None, label=None, line_thickness=None):
+    # Plots one bounding box on image img
+    angle = angle.to('cpu')
+    tl = line_thickness or round(0.002 * (img.shape[0] + img.shape[1]) / 2) + 1  # line/font thickness
+    color = color or [random.randint(0, 255) for _ in range(3)]
+    c1, c2 = (int(x[0]), int(x[1])), (int(x[2]), int(x[3]))
+    #cv2.rectangle(img, c1, c2, color, thickness=tl, lineType=cv2.LINE_AA)
+    w = int(x[2]) - int(x[0])
+    h = int(x[3]) - int(x[1])
+    drawRotatedBox(img, int(x[0] + x[2])/2, int(x[1] + x[3])/2, w, h, angle*math.pi, color=color)
+    if label:
+        tf = max(tl - 1, 1)  # font thickness
+        t_size = cv2.getTextSize(label, 0, fontScale=tl / 5, thickness=tf)[0]
+        c2 = c1[0] + t_size[0], c1[1] - t_size[1] - 3
+        cv2.rectangle(img, c1, c2, color, -1, cv2.LINE_AA)  # filled
+        cv2.putText(img, label, (c1[0], c1[1] - 2), 0, tl / 5, [225, 255, 255], thickness=tf, lineType=cv2.LINE_AA)
+
+
 def plot_wh_methods():  # from utils.general import *; plot_wh_methods()
     # Compares the two methods for width-height anchor multiplication
     # https://github.com/ultralytics/yolov3/issues/168
