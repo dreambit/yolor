@@ -319,7 +319,7 @@ def bbox_iou_rotated(pred_boxes, pred_angle, target_boxes, target_angle, GIoU=Tr
             raise NotImplementedError
 
         ious.append(iou)
-        giou_loss = giou_loss / len(ious) 
+    giou_loss = giou_loss / len(ious) 
 
     return torch.tensor(ious, device=device, dtype=torch.float), giou_loss
 
