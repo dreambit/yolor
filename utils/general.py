@@ -16,7 +16,10 @@ import matplotlib
 import numpy as np
 import torch
 import yaml
+from scipy.spatial import ConvexHull
+#from shapely.geometry import Polygon
 
+from utils.cal_intersection_rotated_boxes import intersection_area, PolyArea2D
 from utils.google_utils import gsutil_getsize
 from utils.metrics import fitness, fitness_p, fitness_r, fitness_ap50, fitness_ap, fitness_f   
 from utils.torch_utils import init_torch_seeds
@@ -227,6 +230,97 @@ def bbox_iou(box1, box2, x1y1x2y2=True, GIoU=False, DIoU=False, CIoU=False, eps=
             return iou - (c_area - union) / c_area  # GIoU
     else:
         return iou  # IoU
+
+
+# https://github.com/maudzung/Complex-YOLOv4-Pytorch
+def cvt_box_2_polygon(box):
+    """
+    :param array: an array of shape [num_conners, 2]
+    :return: a shapely.geometry.Polygon object
+    """
+    # use .buffer(0) to fix a line polygon
+    # more infor: https://stackoverflow.com/questions/13062334/polygon-intersection-error-in-shapely-shapely-geos-topologicalerror-the-opera
+    return Polygon([(box[i, 0], box[i, 1]) for i in range(len(box))]).buffer(0)
+
+def get_corners_vectorize(x, y, w, l, yaw):
+    """bev image coordinates format - vectorization
+    :param x, y, w, l, yaw: [num_boxes,]
+    :return: num_boxes x (x,y) of 4 conners
+    """
+    device = x.device
+    bbox2 = torch.zeros((x.size(0), 4, 2), device=device, dtype=torch.float)
+    cos_yaw = torch.cos(yaw)
+    sin_yaw = torch.sin(yaw)
+
+    # front left
+    bbox2[:, 0, 0] = x - w / 2 * cos_yaw - l / 2 * sin_yaw
+    bbox2[:, 0, 1] = y - w / 2 * sin_yaw + l / 2 * cos_yaw
+
+    # rear left
+    bbox2[:, 1, 0] = x - w / 2 * cos_yaw + l / 2 * sin_yaw
+    bbox2[:, 1, 1] = y - w / 2 * sin_yaw - l / 2 * cos_yaw
+
+    # rear right
+    bbox2[:, 2, 0] = x + w / 2 * cos_yaw + l / 2 * sin_yaw
+    bbox2[:, 2, 1] = y + w / 2 * sin_yaw - l / 2 * cos_yaw
+
+    # front right
+    bbox2[:, 3, 0] = x + w / 2 * cos_yaw - l / 2 * sin_yaw
+    bbox2[:, 3, 1] = y + w / 2 * sin_yaw + l / 2 * cos_yaw
+
+    return bbox2
+
+# https://github.com/maudzung/Complex-YOLOv4-Pytorch
+def bbox_iou_rotated(pred_boxes, pred_angle, target_boxes, target_angle, GIoU=True, DIoU=False, CIoU=False):
+    assert pred_boxes.size() == target_boxes.size(), "Unmatch size of pred_boxes and target_boxes"
+    device = pred_boxes.device
+    n_boxes = pred_boxes.size(0)
+
+    #t_x, t_y, t_w, t_l, t_im, t_re = target_boxes.t()
+    #t_yaw = torch.atan2(t_im, t_re)
+    t_x, t_y, t_w, t_l = target_boxes.t()   # center_x, center_y, w, h
+    t_yaw = pred_angle * math.pi            # angle
+    t_conners = get_corners_vectorize(t_x, t_y, t_w, t_l, t_yaw)
+    t_areas = t_w * t_l
+
+    #p_x, p_y, p_w, p_l, p_im, p_re = pred_boxes.t()
+    #p_yaw = torch.atan2(p_im, p_re)
+    p_x, p_y, p_w, p_l = pred_boxes.t()     # center_x, center_y, w, h
+    p_yaw = target_angle * math.pi          # angle
+    p_conners = get_corners_vectorize(p_x, p_y, p_w, p_l, p_yaw)
+    p_areas = p_w * p_l
+
+    ious = []
+    giou_loss = torch.tensor([0.], device=device, dtype=torch.float)
+    # Thinking to apply vectorization this step
+    for box_idx in range(n_boxes):
+        p_cons, t_cons = p_conners[box_idx], t_conners[box_idx]
+        if not GIoU:
+            raise NotImplementedError
+            #p_poly, t_poly = cvt_box_2_polygon(p_cons), cvt_box_2_polygon(t_cons)
+            #intersection = p_poly.intersection(t_poly).area
+        else:
+            intersection = intersection_area(p_cons, t_cons)
+
+        p_area, t_area = p_areas[box_idx], t_areas[box_idx]
+        union = p_area + t_area - intersection
+        iou = intersection / (union + 1e-16)
+
+        if GIoU:
+            convex_conners = torch.cat((p_cons, t_cons), dim=0)
+            hull = ConvexHull(convex_conners.clone().detach().cpu().numpy())  # done on cpu, just need indices output
+            convex_conners = convex_conners[hull.vertices]
+            convex_area = PolyArea2D(convex_conners)
+            giou_loss += 1. - (iou - (convex_area - union) / (convex_area + 1e-16))
+        else:
+            giou_loss += 1. - iou
+
+        if DIoU or CIoU:
+            raise NotImplementedError
+
+        ious.append(iou)
+
+    return torch.tensor(ious, device=device, dtype=torch.float), giou_loss
 
 
 def box_iou(box1, box2):

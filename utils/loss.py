@@ -3,7 +3,7 @@
 import torch
 import torch.nn as nn
 
-from utils.general import bbox_iou, wh_iou
+from utils.general import bbox_iou, wh_iou, bbox_iou_rotated
 from utils.torch_utils import is_parallel
 
 
@@ -95,22 +95,30 @@ def compute_loss(p, targets, model):  # predictions, targets, model
             nt += n  # cumulative targets
             ps = pi[b, a, gj, gi]  # prediction subset corresponding to targets
 
-            #print(f"\n i = {i}, ps = {ps.shape}, pi = {pi.shape}, tobj = {tobj.shape}, no = len(p) = {no}, anchors[i] = {anchors[i].shape}, anchors = {len(anchors)}")
-            # Regression
-            pxy = ps[:, :2].sigmoid() * 2. - 0.5
-            pwh = (ps[:, 2:4].sigmoid() * 2) ** 2 * anchors[i]
-            pbox = torch.cat((pxy, pwh), 1).to(device)  # predicted box
-            iou = bbox_iou(pbox.T, tbox[i], x1y1x2y2=False, CIoU=True)  # iou(prediction, target)
-            lbox += (1.0 - iou).mean()  # iou loss           
-
             if tangle[i] is not None:
                 pangle = ps[:, 4].to(device).sigmoid() * 4.0 - 2.0
                 #print(f" ps = {ps.shape}, pxy = {pxy.shape}, pwh = {pwh.shape}, pbox = {pbox.shape}, iou = {iou.shape}, tbox[i] = {tbox[i].shape} ")
                 #print(f" ps = {ps.shape}, tangle[i] = {tangle[i].shape}, pangle = {pangle.shape}")
-                langle += MSEangle(pangle, tangle[i]) 
+                #langle += MSEangle(pangle, tangle[i]) 
                 #print(f" langle = {langle}")
                 #print(f"\n tangle[i] = {tangle[i]}")
                 #print(f"\n pangle = {pangle}")
+
+                # Bbox Regression
+                pxy = ps[:, :2].sigmoid() * 2. - 0.5
+                pwh = (ps[:, 2:4].sigmoid() * 2) ** 2 * anchors[i]
+                pbox = torch.cat((pxy, pwh), 1).to(device)  # predicted box
+                #print(f" shape: pbox = {pbox.shape}, tbox[i] = {tbox[i].shape}")
+                iou, giou_loss = bbox_iou_rotated(pbox, pangle, tbox[i], tangle[i], GIoU=True, DIoU=False, CIoU=False)
+                lbox += giou_loss  # giou loss   
+            else:
+                #print(f"\n i = {i}, ps = {ps.shape}, pi = {pi.shape}, tobj = {tobj.shape}, no = len(p) = {no}, anchors[i] = {anchors[i].shape}, anchors = {len(anchors)}")
+                # Regression
+                pxy = ps[:, :2].sigmoid() * 2. - 0.5
+                pwh = (ps[:, 2:4].sigmoid() * 2) ** 2 * anchors[i]
+                pbox = torch.cat((pxy, pwh), 1).to(device)  # predicted box
+                iou = bbox_iou(pbox.T, tbox[i], x1y1x2y2=False, CIoU=True)  # iou(prediction, target)
+                lbox += (1.0 - iou).mean()  # iou loss           
 
             # Objectness
             tobj[b, a, gj, gi] = (1.0 - model.gr) + model.gr * iou.detach().clamp(0).type(tobj.dtype)  # iou ratio
