@@ -112,9 +112,6 @@ def compute_loss(p, targets, model):  # predictions, targets, model
                 if rotation_giou:
                     iou, giou_loss = bbox_iou_rotated(pbox, pangle, tbox[i], tangle[i], GIoU=True, DIoU=False, CIoU=False)
                     lbox += giou_loss  # giou loss   
-
-                    iou, giou_loss = bbox_iou_rotated(pbox, pangle, tbox[i], tangle[i], GIoU=True, DIoU=False, CIoU=False)
-                    lbox += giou_loss  # giou loss   
                 else:
                     langle += MSEangle(pangle, tangle[i])
                     #print(f" langle = {langle}")
