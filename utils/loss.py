@@ -99,7 +99,7 @@ def compute_loss(p, targets, model):  # predictions, targets, model
                 pangle = ps[:, 4].to(device).sigmoid() * 4.0 - 2.0
                 #print(f" ps = {ps.shape}, pxy = {pxy.shape}, pwh = {pwh.shape}, pbox = {pbox.shape}, iou = {iou.shape}, tbox[i] = {tbox[i].shape} ")
                 #print(f" ps = {ps.shape}, tangle[i] = {tangle[i].shape}, pangle = {pangle.shape}")
-                langle += torch.sqrt(MSEangle(pangle, tangle[i]))
+                langle += MSEangle(pangle, tangle[i])
                 #print(f" langle = {langle}")
                 #print(f"\n tangle[i] = {tangle[i]}")
                 #print(f"\n pangle = {pangle}")
