@@ -96,7 +96,7 @@ def compute_loss(p, targets, model):  # predictions, targets, model
             ps = pi[b, a, gj, gi]  # prediction subset corresponding to targets
 
             rotation_giou = False
-            if rotation_giou in h:
+            if 'rotation_giou' in h:
                 rotation_giou = h['rotation_giou']
 
             if tangle[i] is not None:
