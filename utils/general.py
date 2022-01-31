@@ -360,10 +360,14 @@ def wh_iou(wh1, wh2):
 
 def non_max_suppression(prediction, conf_thres=0.1, iou_thres=0.6, merge=False, classes=None, agnostic=False, rotated=False):
     """Performs Non-Maximum Suppression (NMS) on inference results
+    (x_center, y_center, w, h, conf, cls...) ->
+    or 
+    (x_center, y_center, w, h, angle, conf, cls...) -> (x1, y1, x2, y2, conf, cls, angle)
 
     Returns:
-         detections with shape: nx6 (x1, y1, x2, y2, conf, cls)
+         detections with shape: nx6 (x1, y1, x2, y2, conf, cls) or nx7 (x1, y1, x2, y2, conf, cls, angle)
     """
+
 
     obj_idx = 5 if rotated else 4
     #print(f" rotated = {rotated}, obj_idx = {obj_idx} ")
@@ -396,22 +400,27 @@ def non_max_suppression(prediction, conf_thres=0.1, iou_thres=0.6, merge=False, 
         # Box (center x, center y, width, height) to (x1, y1, x2, y2)
         box = xywh2xyxy(x[:, :4])
 
-        # Detections matrix nx6 (xyxy, conf, cls)
+        # Detections matrix nx6 (xyxy, conf, cls) or nx7 (xyxy, conf, cls, angle) 
         if multi_label:
             i, j = (x[:, (obj_idx+1):] > conf_thres).nonzero(as_tuple=False).T
             if rotated:
+                # concat angle
                 x = torch.cat((box[i], x[i, j + (obj_idx+1), None], j[:, None].float(), x[i, 4, None]), 1)
                 #print(f"x1 = {x}")
             else:
                 x = torch.cat((box[i], x[i, j + (obj_idx+1), None], j[:, None].float()), 1)
             #print(f"x2 = {x.shape}")
         else:  # best class only
+            #print(f"x2-1 = {x.shape}")
             conf, j = x[:, (obj_idx+1):].max(1, keepdim=True)
-            x = torch.cat((box, conf, j.float()), 1)[conf.view(-1) > conf_thres]
+            angle = x[:, 4:5] if rotated else x[:,0:0]
+            #print(f" rotated = {rotated}, angle = {angle.shape}")
+            x = torch.cat((box, conf, j.float(), angle), 1)[conf.view(-1) > conf_thres]
 
+        #print(f"x2-2 = {x.shape}")
         # Filter by class
         if classes:
-            x = x[(x[:, (obj_idx+1):(obj_idx+2)] == torch.tensor(classes, device=x.device)).any(1)]
+            x = x[(x[:, 5:6] == torch.tensor(classes, device=x.device)).any(1)]
         
         #print(f"x3 = {x.shape}")
         # Apply finite constraint
@@ -427,7 +436,8 @@ def non_max_suppression(prediction, conf_thres=0.1, iou_thres=0.6, merge=False, 
         # x = x[x[:, 4].argsort(descending=True)]
 
         # Batched NMS
-        c = x[:, (obj_idx+1):(obj_idx+2)] * (0 if agnostic else max_wh)  # classes
+        c = x[:, 5:6] * (0 if agnostic else max_wh)  # classes
+        #print(f"\n\n classes = {classes}, x = {x.shape}, c = {c.shape} \n\n")
         boxes, scores = x[:, :4] + c, x[:, 4]  # boxes (offset by class), scores
         i = torch.ops.torchvision.nms(boxes, scores, iou_thres)
         if i.shape[0] > max_det:  # limit detections
