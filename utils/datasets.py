@@ -535,7 +535,9 @@ class LoadImagesAndLabels(Dataset):  # for training/testing
                         l = np.array([x.split() for x in f.read().splitlines()], dtype=np.float32)  # labels
                 #print(f"\n\n\n l = {l}, label = {label}")
                 if len(l) == 0:
-                    l = np.zeros((0, 5), dtype=np.float32)
+                    l = np.zeros((0, self.label_fields), dtype=np.float32)
+                else:
+                    self.label_fields = l.shape[1]
                 x[img] = [l, shape]
             except Exception as e:
                 print('WARNING: Ignoring corrupted image and/or label %s: %s' % (img, e))
