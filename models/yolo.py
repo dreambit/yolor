@@ -29,10 +29,14 @@ class Detect(nn.Module):
     stride = None  # strides computed during build
     export = False  # onnx export
 
-    def __init__(self, nc=80, anchors=(), ch=()):  # detection layer
+    def __init__(self, nc=80, anchors=(), rotated=False, ch=()):  # detection layer
         super(Detect, self).__init__()
         self.nc = nc  # number of classes
         self.no = nc + 5  # number of outputs per anchor
+        self.rotated = rotated
+        if self.rotated:
+            self.no += 1
+        print(f"\n\n self.no = {self.no}, self.rotated = {self.rotated} \n\n")
         self.nl = len(anchors)  # number of detection layers
         self.na = len(anchors[0]) // 2  # number of anchors
         self.grid = [torch.zeros(1)] * self.nl  # init grid
@@ -57,6 +61,11 @@ class Detect(nn.Module):
                 y = x[i].sigmoid()
                 y[..., 0:2] = (y[..., 0:2] * 2. - 0.5 + self.grid[i].to(x[i].device)) * self.stride[i]  # xy
                 y[..., 2:4] = (y[..., 2:4] * 2) ** 2 * self.anchor_grid[i]  # wh
+                if not hasattr(self, 'rotated'):
+                    self.rotated = False
+                if self.rotated:
+                    y[..., 4:5] = y[..., 4:5] * 4. - 2. # angle = (-2.0 ; +2.0), use only [-1.0; +1.0] -> [-pi; +pi]
+
                 z.append(y.view(bs, -1, self.no))
 
         return x if self.training else (torch.cat(z, 1), x)
