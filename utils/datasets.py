@@ -634,8 +634,8 @@ class LoadImagesAndLabels(Dataset):  # for training/testing
                     labels[:, 1] = 1 - labels[:, 1]
                     if labels.shape[1] == 6:
                         angle = labels[:, 5]
-                        angle[angle >= 0] = 180 - angle[angle >= 0]
-                        angle[angle < 0] = -180 - angle[angle < 0]
+                        angle[angle >= 0] = 1.0 - angle[angle >= 0]
+                        angle[angle < 0] = -1.0 - angle[angle < 0]
                         labels[:, 5] = angle
 
         labels_out = torch.zeros((nL, self.label_fields+1))
@@ -929,8 +929,8 @@ class LoadImagesAndLabels9(Dataset):  # for training/testing
                     labels[:, 1] = 1 - labels[:, 1]
                     if labels.shape[1] == 6:
                         angle = labels[:, 5]
-                        angle[angle >= 0] = 180 - angle[angle >= 0]
-                        angle[angle < 0] = -180 - angle[angle < 0]
+                        angle[angle >= 0] = 1.0 - angle[angle >= 0]
+                        angle[angle < 0] = -1.0 - angle[angle < 0]
                         labels[:, 5] = angle
 
         labels_out = torch.zeros((nL, 6))
