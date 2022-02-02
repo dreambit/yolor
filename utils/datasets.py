@@ -1195,7 +1195,7 @@ def random_perspective(img, targets=(), degrees=10, translate=.1, scale=.1, shea
     # s = 2 ** random.uniform(-scale, scale)
     R[:2] = cv2.getRotationMatrix2D(angle=a, center=(0, 0), scale=s)
     
-    if labels.shape[1] == 6:
+    if targets.shape[1] == 6:
         targets[:, 6] += a / 180.0
 
     # Shear
