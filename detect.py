@@ -124,8 +124,9 @@ def detect(save_img=False):
 
             # Stream results
             if view_img:
-                cv2.imshow(p, im0)
-                if cv2.waitKey(1) == ord('q'):  # q to quit
+                cv2.imshow(p.__str__(), im0)
+                wait_time = 1 if webcam else 0
+                if cv2.waitKey(wait_time) == ord('q'):  # q to quit
                     raise StopIteration
 
             # Save results (image with detections)
