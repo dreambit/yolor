@@ -625,7 +625,7 @@ class LoadImagesAndLabels(Dataset):  # for training/testing
                 if nL:
                     labels[:, 2] = 1 - labels[:, 2]
                     if labels.shape[1] == 6:
-                        labels[:, 6] = -labels[:, 6]
+                        labels[:, 5] = -labels[:, 5]
 
             # flip left-right
             if random.random() < hyp['fliplr']:
@@ -633,10 +633,10 @@ class LoadImagesAndLabels(Dataset):  # for training/testing
                 if nL:
                     labels[:, 1] = 1 - labels[:, 1]
                     if labels.shape[1] == 6:
-                        angle = labels[:, 6]
+                        angle = labels[:, 5]
                         angle[angle >= 0] = 180 - angle[angle >= 0]
                         angle[angle < 0] = -180 - angle[angle < 0]
-                        labels[:, 6] = angle
+                        labels[:, 5] = angle
 
         labels_out = torch.zeros((nL, self.label_fields+1))
         if nL:
@@ -920,7 +920,7 @@ class LoadImagesAndLabels9(Dataset):  # for training/testing
                 if nL:
                     labels[:, 2] = 1 - labels[:, 2]
                     if labels.shape[1] == 6:
-                        labels[:, 6] = -labels[:, 6]
+                        labels[:, 5] = -labels[:, 5]
 
             # flip left-right
             if random.random() < hyp['fliplr']:
@@ -928,10 +928,10 @@ class LoadImagesAndLabels9(Dataset):  # for training/testing
                 if nL:
                     labels[:, 1] = 1 - labels[:, 1]
                     if labels.shape[1] == 6:
-                        angle = labels[:, 6]
+                        angle = labels[:, 5]
                         angle[angle >= 0] = 180 - angle[angle >= 0]
                         angle[angle < 0] = -180 - angle[angle < 0]
-                        labels[:, 6] = angle
+                        labels[:, 5] = angle
 
         labels_out = torch.zeros((nL, 6))
         if nL:
@@ -1196,7 +1196,7 @@ def random_perspective(img, targets=(), degrees=10, translate=.1, scale=.1, shea
     R[:2] = cv2.getRotationMatrix2D(angle=a, center=(0, 0), scale=s)
     
     if targets.shape[1] == 6:
-        targets[:, 6] += a / 180.0
+        targets[:, 5] += a / 180.0
 
     # Shear
     S = np.eye(3)
