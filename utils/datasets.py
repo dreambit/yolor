@@ -933,7 +933,7 @@ class LoadImagesAndLabels9(Dataset):  # for training/testing
                     if labels.shape[1] == 6:
                         labels[:, 5] = -labels[:, 5]
 
-        labels_out = torch.zeros((nL, 6))
+        labels_out = torch.zeros((nL, self.label_fields+1))
         if nL:
             labels_out[:, 1:] = torch.from_numpy(labels)
 
