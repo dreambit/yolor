@@ -625,7 +625,10 @@ class LoadImagesAndLabels(Dataset):  # for training/testing
                 if nL:
                     labels[:, 2] = 1 - labels[:, 2]
                     if labels.shape[1] == 6:
-                        labels[:, 5] = -labels[:, 5]
+                        angle = labels[:, 5]
+                        angle[angle >= 0] = 1.0 - angle[angle >= 0]
+                        angle[angle < 0] = -1.0 - angle[angle < 0]
+                        labels[:, 5] = angle
 
             # flip left-right
             if random.random() < hyp['fliplr']:
@@ -633,10 +636,7 @@ class LoadImagesAndLabels(Dataset):  # for training/testing
                 if nL:
                     labels[:, 1] = 1 - labels[:, 1]
                     if labels.shape[1] == 6:
-                        angle = labels[:, 5]
-                        angle[angle >= 0] = 1.0 - angle[angle >= 0]
-                        angle[angle < 0] = -1.0 - angle[angle < 0]
-                        labels[:, 5] = angle
+                        labels[:, 5] = -labels[:, 5]
 
         labels_out = torch.zeros((nL, self.label_fields+1))
         if nL:
@@ -920,7 +920,10 @@ class LoadImagesAndLabels9(Dataset):  # for training/testing
                 if nL:
                     labels[:, 2] = 1 - labels[:, 2]
                     if labels.shape[1] == 6:
-                        labels[:, 5] = -labels[:, 5]
+                        angle = labels[:, 5]
+                        angle[angle >= 0] = 1.0 - angle[angle >= 0]
+                        angle[angle < 0] = -1.0 - angle[angle < 0]
+                        labels[:, 5] = angle
 
             # flip left-right
             if random.random() < hyp['fliplr']:
@@ -928,10 +931,7 @@ class LoadImagesAndLabels9(Dataset):  # for training/testing
                 if nL:
                     labels[:, 1] = 1 - labels[:, 1]
                     if labels.shape[1] == 6:
-                        angle = labels[:, 5]
-                        angle[angle >= 0] = 1.0 - angle[angle >= 0]
-                        angle[angle < 0] = -1.0 - angle[angle < 0]
-                        labels[:, 5] = angle
+                        labels[:, 5] = -labels[:, 5]
 
         labels_out = torch.zeros((nL, 6))
         if nL:
