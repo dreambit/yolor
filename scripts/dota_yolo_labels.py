@@ -6,7 +6,7 @@ import cv2
 
 class_names = ["plane", "ship", "storage-tank", "baseball-diamond", "tennis-court", "basketball-court", 
     "ground-track-field", "harbor", "bridge", "large-vehicle", "small-vehicle", "helicopter", "roundabout", 
-    "soccer-ball-field", "swimming-pool", "container-crane"]
+    "soccer-ball-field", "swimming-pool", "container-crane", "airport", "helipad"]
 
 def get_length(x0, y0, x1, y1):
     x = x1 - x0

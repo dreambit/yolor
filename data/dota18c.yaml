@@ -1,0 +1,18 @@
+# DOTA 1.0 (15 classes), 1.5 (16 classes), 2.0 (18 classes) dataset https://captain-whu.github.io/DOTA/dataset.html
+
+# convert DOTA-labels to YOLO-labels: scripts/dota_yolo_labels.py
+
+# train and val data as 1) directory: path/images/, 2) file: path/images.txt, or 3) list: [path1/images/, path2/images/]
+train: ./dota18c/train.txt  # 1830 images
+val: ./dota18c/val.txt  # 593 images
+test: ./dota18c/test.txt  # , submit to https://captain-whu.github.io/DOTA/evaluation.html
+
+# number of classes
+nc: 18
+
+# class names
+names: [ 
+    'plane', 'ship', 'storage_tank', 'baseball_diamond', 'tennis_court', 
+    'basketball_court', 'ground_track_field', 'harbor', 'bridge', 
+    'large_vehicle', 'small_vehicle', 'helicopter', 'roundabout', 
+    'soccer_ball_field', 'swimming_pool', 'container_crane', 'airport', 'helipad' ]
