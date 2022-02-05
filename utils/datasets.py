@@ -1195,8 +1195,9 @@ def random_perspective(img, targets=(), degrees=10, translate=.1, scale=.1, shea
     # s = 2 ** random.uniform(-scale, scale)
     R[:2] = cv2.getRotationMatrix2D(angle=a, center=(0, 0), scale=s)
     
+    # change target angle
     if targets.shape[1] == 6:
-        targets[:, 5] += a / 180.0
+        targets[:, 5] -= a / 180.0
 
     # Shear
     S = np.eye(3)
