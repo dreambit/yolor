@@ -89,6 +89,10 @@ def train(hyp, opt, device, tb_writer=None, wandb=None):
     else:
         model = Model(opt.cfg, ch=3, nc=nc).to(device)  # create
 
+    rotated = False
+    if hasattr(model, 'rotated'):
+        rotated = model.rotated
+
     # Freeze
     freeze = []  # parameter names to freeze (full or partial)
     for k, v in model.named_parameters():
@@ -336,7 +340,7 @@ def train(hyp, opt, device, tb_writer=None, wandb=None):
                 # Plot
                 if plots and ni < 3:
                     f = save_dir / f'train_batch{ni}.jpg'  # filename
-                    plot_images(images=imgs, targets=targets, paths=paths, fname=f)
+                    plot_images(images=imgs, targets=targets, paths=paths, fname=f, rotated=rotated)
                     # if tb_writer:
                     #     tb_writer.add_image(f, result, dataformats='HWC', global_step=epoch)
                     #     tb_writer.add_graph(model, imgs)  # add model to tensorboard

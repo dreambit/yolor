@@ -197,6 +197,10 @@ def test(data,
             model = ONNXModel(model, device, opt.img_size, dtype='half', batch_size=batch_size)
             rect = False
 
+    rotated = False
+    if hasattr(model, 'rotated'):
+        rotated = model.rotated
+
     # Half
     half = device.type != 'cpu'  # half precision only supported on CUDA
     if half:
@@ -352,9 +356,9 @@ def test(data,
         # Plot images
         if plots and batch_i < 3:
             f = save_dir / f'test_batch{batch_i}_labels.jpg'  # filename
-            plot_images(img, targets, paths, f, names)  # labels
+            plot_images(img, targets, paths, f, names, rotated=rotated)  # labels
             f = save_dir / f'test_batch{batch_i}_pred.jpg'
-            plot_images(img, output_to_target(output, width, height), paths, f, names)  # predictions
+            plot_images(img, output_to_target(output, width, height), paths, f, names, rotated=rotated)  # predictions
 
     # Compute statistics
     stats = [np.concatenate(x, 0) for x in zip(*stats)]  # to numpy

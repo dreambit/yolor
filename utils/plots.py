@@ -101,7 +101,8 @@ def drawRotatedBox(img, x, y, w, l, yaw, color):
 
 def plot_one_rotated_box(x, angle, img, color=None, label=None, line_thickness=None):
     # Plots one bounding box on image img
-    angle = angle.to('cpu')
+    if isinstance(angle, torch.Tensor):
+        angle = angle.to('cpu')
     tl = line_thickness or round(0.002 * (img.shape[0] + img.shape[1]) / 2) + 1  # line/font thickness
     color = color or [random.randint(0, 255) for _ in range(3)]
     c1, c2 = (int(x[0]), int(x[1])), (int(x[2]), int(x[3]))
@@ -156,12 +157,16 @@ def output_to_target(output, width, height):
                 conf = pred[4]
                 cls = int(pred[5])
 
-                targets.append([i, cls, x, y, w, h, conf])
+                if pred.shape[0] == 6:
+                    targets.append([i, cls, x, y, w, h, conf])
+                elif pred.shape[0] == 7:
+                    angle = pred[6]
+                    targets.append([i, cls, x, y, w, h, angle, conf])
 
     return np.array(targets)
 
 
-def plot_images(images, targets, paths=None, fname='images.jpg', names=None, max_size=640, max_subplots=16):
+def plot_images(images, targets, paths=None, fname='images.jpg', names=None, max_size=640, max_subplots=16, rotated=False):
     # Plot image grid with labels
 
     if isinstance(images, torch.Tensor):
@@ -203,8 +208,13 @@ def plot_images(images, targets, paths=None, fname='images.jpg', names=None, max
             image_targets = targets[targets[:, 0] == i]
             boxes = xywh2xyxy(image_targets[:, 2:6]).T
             classes = image_targets[:, 1].astype('int')
-            labels = image_targets.shape[1] == 6  # labels if no conf column
-            conf = None if labels else image_targets[:, 6]  # check for confidence presence (label vs pred)
+            if rotated:
+                angle = image_targets[:, 6]
+                labels = image_targets.shape[1] == 7  # labels if no conf column
+                conf = None if labels else image_targets[:, 7]  # check for confidence presence (label vs pred)
+            else:
+                labels = image_targets.shape[1] == 6  # labels if no conf column
+                conf = None if labels else image_targets[:, 6]  # check for confidence presence (label vs pred)
 
             boxes[[0, 2]] *= w
             boxes[[0, 2]] += block_x
@@ -216,7 +226,11 @@ def plot_images(images, targets, paths=None, fname='images.jpg', names=None, max
                 cls = names[cls] if names else cls
                 if labels or conf[j] > 0.25:  # 0.25 conf thresh
                     label = '%s' % cls if labels else '%s %.1f' % (cls, conf[j])
-                    plot_one_box(box, mosaic, label=label, color=color, line_thickness=tl)
+                    if rotated:
+                        plot_one_rotated_box(box, angle[j], mosaic, label=label, color=color, line_thickness=2)
+                    else:
+                        plot_one_box(box, mosaic, label=label, color=color, line_thickness=tl)
+                    
 
         # Draw image filename labels
         if paths:
