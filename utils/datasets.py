@@ -1197,7 +1197,11 @@ def random_perspective(img, targets=(), degrees=10, translate=.1, scale=.1, shea
     
     # change target angle
     if targets.shape[1] == 6:
-        targets[:, 5] -= a / 180.0
+        angles = targets[:, 5]
+        angles -= a / 180.0
+        angles[angles < -1.0] += 2.0
+        angles[angles > 1.0] -= 2.0
+        targets[:, 5] = angles
 
     # Shear
     S = np.eye(3)
@@ -1239,6 +1243,14 @@ def random_perspective(img, targets=(), degrees=10, translate=.1, scale=.1, shea
         x = xy[:, [0, 2, 4, 6]]
         y = xy[:, [1, 3, 5, 7]]
         xy = np.concatenate((x.min(1), y.min(1), x.max(1), y.max(1))).reshape(4, n).T
+
+        # Keep box size for rotated-boxes
+        if targets.shape[1] == 6:
+            x = (xy[:, 2] + xy[:, 0]) / 2
+            y = (xy[:, 3] + xy[:, 1]) / 2
+            w = abs(targets[:, 3] - targets[:, 1]) * s
+            h = abs(targets[:, 4] - targets[:, 2]) * s
+            xy = np.concatenate((x - w / 2, y - h / 2, x + w / 2, y + h / 2)).reshape(4, n).T
 
         # # apply angle-based reduction of bounding boxes
         # radians = a * math.pi / 180
