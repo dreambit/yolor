@@ -1031,7 +1031,7 @@ def load_mosaic(self, index):
     # Concat/clip labels
     if len(labels4):
         labels4 = np.concatenate(labels4, 0)
-        np.clip(labels4[:, 1:], 0, 2 * s, out=labels4[:, 1:])  # use with random_perspective
+        np.clip(labels4[:, 1:5], 0, 2 * s, out=labels4[:, 1:5])  # use with random_perspective
         # img4, labels4 = replicate(img4, labels4)  # replicate
 
     # Augment
@@ -1105,7 +1105,7 @@ def load_mosaic9(self, index):
         labels9[:, [1, 3]] -= xc
         labels9[:, [2, 4]] -= yc
 
-        np.clip(labels9[:, 1:], 0, 2 * s, out=labels9[:, 1:])  # use with random_perspective
+        np.clip(labels9[:, 1:5], 0, 2 * s, out=labels9[:, 1:5])  # use with random_perspective
         # img9, labels9 = replicate(img9, labels9)  # replicate
 
     # Augment
