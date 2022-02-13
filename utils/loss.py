@@ -33,7 +33,7 @@ class SigmoidBin(nn.Module):
     stride = None  # strides computed during build
     export = False  # onnx export
 
-    def __init__(self, bin_count=10, min=0.0, max=1.0, reg_scale = 2.0, BCE_weight=1.0, smooth_eps=0.0):
+    def __init__(self, bin_count=10, min=0.0, max=1.0, reg_scale = 2.0, use_loss_regression=True, BCE_weight=1.0, smooth_eps=0.0):
         super(SigmoidBin, self).__init__()
         
         self.bin_count = bin_count
@@ -43,6 +43,7 @@ class SigmoidBin(nn.Module):
         self.scale = float(max - min)
         self.shift = self.scale / 2.0
 
+        self.use_loss_regression = use_loss_regression
         self.reg_scale = reg_scale
         self.BCE_weight = BCE_weight
 
@@ -107,10 +108,14 @@ class SigmoidBin(nn.Module):
         target_bins[range(n), bin_idx] = self.cp
 
         loss_bin = self.BCEbins(pred_bin, target_bins) # BCE
-        loss_regression = self.MSELoss(result, target)  # MSE
-        
-        loss = loss_bin + loss_regression
-        out_result = result.detach().clamp(min=self.min, max=self.max)
+
+        if self.use_loss_regression:
+            loss_regression = self.MSELoss(result, target)  # MSE        
+            loss = loss_bin + loss_regression
+        else:
+            loss = loss_bin
+
+        out_result = result.clamp(min=self.min, max=self.max)
 
         return loss, out_result
 
@@ -157,7 +162,9 @@ def compute_loss(p, targets, model):  # predictions, targets, model
     BCEobj = nn.BCEWithLogitsLoss(pos_weight=torch.Tensor([h['obj_pw']])).to(device)
     MSEangle = nn.MSELoss().to(device)
 
-    angle_bin_sigmoid = SigmoidBin(bin_count=11, min=-1.1, max=1.1).to(device)
+    xy_bin_sigmoid = SigmoidBin(bin_count=11, min=-0.5, max=1.5, use_loss_regression=False).to(device)
+    wh_bin_sigmoid = SigmoidBin(bin_count=11, min=0.0, max=4.0, use_loss_regression=False).to(device)
+    angle_bin_sigmoid = SigmoidBin(bin_count=11, min=-1.1, max=1.1, use_loss_regression=True).to(device)
 
     # Class label smoothing https://arxiv.org/pdf/1902.04103.pdf eqn 3
     cp, cn = smooth_BCE(eps=0.0)
@@ -177,29 +184,38 @@ def compute_loss(p, targets, model):  # predictions, targets, model
         b, a, gj, gi = indices[i]  # image, anchor, gridy, gridx
         tobj = torch.zeros_like(pi[..., 0], device=device)  # target obj
 
-        obj_idx = (angle_bin_sigmoid.get_length() + 4) if tangle[i] is not None else 4
+        obj_idx = (angle_bin_sigmoid.get_length()*5) if tangle[i] is not None else (angle_bin_sigmoid.get_length()*4)
         n = b.shape[0]  # number of targets
         if n:
             nt += n  # cumulative targets
             ps = pi[b, a, gj, gi]  # prediction subset corresponding to targets
 
+            x_loss, px = xy_bin_sigmoid.training_loss(ps[..., 0:12], tbox[i][..., 0])
+            y_loss, py = xy_bin_sigmoid.training_loss(ps[..., 12:24], tbox[i][..., 1])
+            w_loss, pw = wh_bin_sigmoid.training_loss(ps[..., 24:36], tbox[i][..., 2] / anchors[i][..., 0])
+            h_loss, ph = wh_bin_sigmoid.training_loss(ps[..., 36:48], tbox[i][..., 3] / anchors[i][..., 1])
+
+            pw *= anchors[i][..., 0]
+            ph *= anchors[i][..., 1]
+
+            lbox += x_loss + y_loss + w_loss + h_loss
+
+            #print(f"\n px = {px.shape}, py = {py.shape}, pw = {pw.shape}, ph = {ph.shape} \n")
+
+            pbox = torch.cat((px.unsqueeze(1), py.unsqueeze(1), pw.unsqueeze(1), ph.unsqueeze(1)), 1).to(device)  # predicted box
+            
             rotation_giou = False
             if 'rotation_giou' in h:
                 rotation_giou = h['rotation_giou']
 
             if tangle[i] is not None:
 
-                angle_loss, pangle = angle_bin_sigmoid.training_loss(ps[..., 4:16], tangle[i])
+                angle_loss, pangle = angle_bin_sigmoid.training_loss(ps[..., 48:60], tangle[i])
                 langle += angle_loss
 
                 #diff_angle = tangle[i] - pangle
                 #tangle[i][diff_angle > 1.5] -= 2.0
                 #tangle[i][diff_angle < -1.5] += 2.0
-
-                # Bbox Regression
-                pxy = ps[:, :2].sigmoid() * 2. - 0.5
-                pwh = (ps[:, 2:4].sigmoid() * 2) ** 2 * anchors[i]
-                pbox = torch.cat((pxy, pwh), 1).to(device)  # predicted box
 
                 if rotation_giou:
                     iou, giou_loss = bbox_iou_rotated(pbox, pangle, tbox[i], tangle[i], GIoU=True, DIoU=False, CIoU=False)
@@ -216,9 +232,9 @@ def compute_loss(p, targets, model):  # predictions, targets, model
             else:
                 #print(f"\n i = {i}, ps = {ps.shape}, pi = {pi.shape}, tobj = {tobj.shape}, no = len(p) = {no}, anchors[i] = {anchors[i].shape}, anchors = {len(anchors)}")
                 # Regression
-                pxy = ps[:, :2].sigmoid() * 2. - 0.5
-                pwh = (ps[:, 2:4].sigmoid() * 2) ** 2 * anchors[i]
-                pbox = torch.cat((pxy, pwh), 1).to(device)  # predicted box
+                #pxy = ps[:, :2].sigmoid() * 2. - 0.5
+                #pwh = (ps[:, 2:4].sigmoid() * 2) ** 2 * anchors[i]
+                #pbox = torch.cat((pxy, pwh), 1).to(device)  # predicted box
                 iou = bbox_iou(pbox.T, tbox[i], x1y1x2y2=False, CIoU=True)  # iou(prediction, target)
                 lbox += (1.0 - iou).mean()  # iou loss           
 
