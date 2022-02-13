@@ -14,6 +14,7 @@ import torch.nn.functional as F
 
 from models.common import Conv, Bottleneck, SPP, SPPCSP, VoVCSP, DWConv, Focus, BottleneckCSP, BottleneckCSPLG, BottleneckCSPSE, BottleneckCSPSAM, BottleneckCSPSEA, BottleneckCSPSAMA, BottleneckCSPSAMB, BottleneckCSPGC, BottleneckCSPDNL, BottleneckCSP2, BottleneckCSP2SAM, Concat, DownC, DownD, DNL, GC, SAM, SAMA, NMS, autoShape, TR, BottleneckCSPTR, BottleneckCSP2TR, SPPCSPTR, ReOrg, BottleneckCSPF, ImplicitA, ImplicitM, DWT, RepVGGBlock, ConvRepVGG, BottleneckCSPRepVGG2, BottleneckCSPRepVGG3, BottleneckCSPFRepVGG, BottleneckCSPFRepVGG2, BottleneckRepVGG
 from models.experimental import MixConv2d, CrossConv, C3
+from utils.loss import SigmoidBin
 from utils.autoanchor import check_anchor_order
 from utils.general import make_divisible, check_file, set_logging
 from utils.torch_utils import time_synchronized, fuse_conv_and_bn, model_info, scale_img, initialize_weights, \
@@ -86,7 +87,8 @@ class IDetect(nn.Module):
         self.no = nc + 5  # number of outputs per anchor
         self.rotated = rotated
         if self.rotated:
-            self.no += 1
+            self.angle_bin_sigmoid = SigmoidBin(bin_count=11, min=-1.1, max=1.1)
+            self.no += self.angle_bin_sigmoid.get_length()
         print(f"\n\n self.no = {self.no}, self.rotated = {self.rotated} \n\n")
         self.nl = len(anchors)  # number of detection layers
         self.na = len(anchors[0]) // 2  # number of anchors
@@ -118,9 +120,13 @@ class IDetect(nn.Module):
                 if not hasattr(self, 'rotated'):
                     self.rotated = False
                 if self.rotated:
-                    y[..., 4:5] = y[..., 4:5] * 4. - 2. # angle = (-2.0 ; +2.0), use only [-1.0; +1.0] -> [-pi; +pi]
+                    angle = self.angle_bin_sigmoid.forward(y[..., 4:16]) # 11 values = (1-reg + 11-bce)                                        
+                    y[..., 4] = angle
 
-                z.append(y.view(bs, -1, self.no))
+                    y = torch.cat((y[..., 0:5], y[..., 16:]), dim=-1)
+
+
+                z.append(y.view(bs, -1, y.shape[-1]))
 
         return x if self.training else (torch.cat(z, 1), x)
 

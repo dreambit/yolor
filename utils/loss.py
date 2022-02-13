@@ -29,6 +29,92 @@ class BCEBlurWithLogitsLoss(nn.Module):
         return loss.mean()
 
 
+class SigmoidBin(nn.Module):
+    stride = None  # strides computed during build
+    export = False  # onnx export
+
+    def __init__(self, bin_count=10, min=0.0, max=1.0, reg_scale = 2.0, BCE_weight=1.0, smooth_eps=0.0):
+        super(SigmoidBin, self).__init__()
+        
+        self.bin_count = bin_count
+        self.length = bin_count + 1
+        self.min = min
+        self.max = max
+        self.scale = float(max - min)
+        self.shift = self.scale / 2.0
+
+        self.reg_scale = reg_scale
+        self.BCE_weight = BCE_weight
+
+        start = min + (self.scale/2.0) / self.bin_count
+        end = max - (self.scale/2.0) / self.bin_count
+        step = self.scale / self.bin_count
+        self.step = step
+        #print(f" start = {start}, end = {end}, step = {step} ")
+
+        bins = torch.range(start, end + 0.0001, step).float() 
+        self.register_buffer('bins', bins) 
+               
+
+        self.cp = 1.0 - 0.5 * smooth_eps
+        self.cn = 0.5 * smooth_eps
+
+        self.BCEbins = nn.BCEWithLogitsLoss(pos_weight=torch.Tensor([BCE_weight]))
+        self.MSELoss = nn.MSELoss()
+
+        #print(f" min_val = {self.bins[0] + (0.0 * self.reg_scale - self.reg_scale/2.0) * self.step} with clamp = {min} ")
+        #print(f" max_val = {self.bins[-1] + (1.0 * self.reg_scale - self.reg_scale/2.0) * self.step} with clamp = {max} ")
+
+        #print(f" min_reg = {(0.0 * self.reg_scale - self.reg_scale/2.0) * self.step}")
+        #print(f" max_reg = {(1.0 * self.reg_scale - self.reg_scale/2.0) * self.step}")
+        #print(f" bin_count = {bin_count}, reg_scale = {reg_scale}, reg_scale*step/2 = {reg_scale*step/2}, bins = {bins.shape}, bins = {bins} ")
+
+    def get_length(self):
+        return self.length
+
+    def forward(self, pred):
+        assert pred.shape[-1] == self.length, 'pred.shape[-1]=%d is not equal to self.length=%d' % (pred.shape[-1], self.length)
+
+        pred_reg = (pred[..., 0] * self.reg_scale - self.reg_scale/2.0) * self.step
+        pred_bin = pred[..., 1:(1+self.bin_count)]
+
+        _, bin_idx = torch.max(pred_bin, dim=-1)
+        bin_bias = self.bins[bin_idx]
+
+        result = pred_reg + bin_bias
+        result = result.clamp(min=self.min, max=self.max)
+
+        return result
+
+
+    def training_loss(self, pred, target):
+        assert pred.shape[-1] == self.length, 'pred.shape[-1]=%d is not equal to self.length=%d' % (pred.shape[-1], self.length)
+        assert pred.shape[0] == target.shape[0], 'pred.shape=%d is not equal to the target.shape=%d' % (pred.shape[0], target.shape[0])
+        device = pred.device
+
+        pred_reg = (pred[..., 0].sigmoid() * self.reg_scale - self.reg_scale/2.0) * self.step
+        pred_bin = pred[..., 1:(1+self.bin_count)]
+
+        diff_bin_target = torch.abs(target[..., None] - self.bins)
+        _, bin_idx = torch.min(diff_bin_target, dim=-1)
+    
+        bin_bias = self.bins[bin_idx]
+        bin_bias.requires_grad = False
+        result = pred_reg + bin_bias
+
+        target_bins = torch.full_like(pred_bin, self.cn, device=device)  # targets
+        n = pred.shape[0] 
+        target_bins[range(n), bin_idx] = self.cp
+
+        loss_bin = self.BCEbins(pred_bin, target_bins) # BCE
+        loss_regression = self.MSELoss(result, target)  # MSE
+        
+        loss = loss_bin + loss_regression
+        out_result = result.detach().clamp(min=self.min, max=self.max)
+
+        return loss, out_result
+
+
 class FocalLoss(nn.Module):
     # Wraps focal loss around existing loss_fcn(), i.e. criteria = FocalLoss(nn.BCEWithLogitsLoss(), gamma=1.5)
     def __init__(self, loss_fcn, gamma=1.5, alpha=0.25):
@@ -71,6 +157,8 @@ def compute_loss(p, targets, model):  # predictions, targets, model
     BCEobj = nn.BCEWithLogitsLoss(pos_weight=torch.Tensor([h['obj_pw']])).to(device)
     MSEangle = nn.MSELoss().to(device)
 
+    angle_bin_sigmoid = SigmoidBin(bin_count=11, min=-1.1, max=1.1).to(device)
+
     # Class label smoothing https://arxiv.org/pdf/1902.04103.pdf eqn 3
     cp, cn = smooth_BCE(eps=0.0)
 
@@ -89,7 +177,7 @@ def compute_loss(p, targets, model):  # predictions, targets, model
         b, a, gj, gi = indices[i]  # image, anchor, gridy, gridx
         tobj = torch.zeros_like(pi[..., 0], device=device)  # target obj
 
-        obj_idx = 5 if tangle[i] is not None else 4
+        obj_idx = (angle_bin_sigmoid.get_length() + 4) if tangle[i] is not None else 4
         n = b.shape[0]  # number of targets
         if n:
             nt += n  # cumulative targets
@@ -100,12 +188,13 @@ def compute_loss(p, targets, model):  # predictions, targets, model
                 rotation_giou = h['rotation_giou']
 
             if tangle[i] is not None:
-                pangle = ps[:, 4].to(device).sigmoid() * 4.0 - 2.0
-                #print(f" ps = {ps.shape}, pxy = {pxy.shape}, pwh = {pwh.shape}, pbox = {pbox.shape}, iou = {iou.shape}, tbox[i] = {tbox[i].shape} ")
-                #print(f" ps = {ps.shape}, tangle[i] = {tangle[i].shape}, pangle = {pangle.shape}")
-                diff_angle = tangle[i] - pangle
-                tangle[i][diff_angle > 1.5] -= 2.0
-                tangle[i][diff_angle < -1.5] += 2.0
+
+                angle_loss, pangle = angle_bin_sigmoid.training_loss(ps[..., 4:16], tangle[i])
+                langle += angle_loss
+
+                #diff_angle = tangle[i] - pangle
+                #tangle[i][diff_angle > 1.5] -= 2.0
+                #tangle[i][diff_angle < -1.5] += 2.0
 
                 # Bbox Regression
                 pxy = ps[:, :2].sigmoid() * 2. - 0.5
@@ -116,7 +205,7 @@ def compute_loss(p, targets, model):  # predictions, targets, model
                     iou, giou_loss = bbox_iou_rotated(pbox, pangle, tbox[i], tangle[i], GIoU=True, DIoU=False, CIoU=False)
                     lbox += giou_loss  # giou loss   
                 else:
-                    langle += MSEangle(pangle, tangle[i])
+                    #langle += MSEangle(pangle, tangle[i])
                     #print(f" langle = {langle}")
                     #print(f"\n tangle[i] = {tangle[i]}")
                     #print(f"\n pangle = {pangle}")
