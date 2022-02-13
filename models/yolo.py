@@ -92,18 +92,6 @@ class IDetect(nn.Module):
         self.na = len(anchors[0]) // 2  # number of anchors
         self.grid = [torch.zeros(1)] * self.nl  # init grid
         a = torch.tensor(anchors).float().view(self.nl, -1, 2)
-
-        if self.rotated:
-            angles = 3
-            self.na = self.na*angles
-            a = a.repeat(1, 1, angles).view(self.nl, self.na, 2)
-
-            angle_bias = torch.tensor([-0.67, 0.0, 0.67]).repeat(self.na//angles).view(1, self.na, 1, 1, 1).float()
-            self.register_buffer('angle_bias', angle_bias)
-
-            print(f"\n nl = {self.nl}, nl = {self.nl}, a = {a.shape}, a = {a}")
-
-
         self.register_buffer('anchors', a)  # shape(nl,na,2)
         self.register_buffer('anchor_grid', a.clone().view(self.nl, 1, -1, 1, 1, 2))  # shape(nl,1,na,1,1,2)
         self.m = nn.ModuleList(nn.Conv2d(x, self.no * self.na, 1) for x in ch)  # output conv
@@ -130,7 +118,7 @@ class IDetect(nn.Module):
                 if not hasattr(self, 'rotated'):
                     self.rotated = False
                 if self.rotated:
-                    y[..., 4:5] = y[..., 4:5] * 4. - 2. + self.angle_bias.view(1, self.na, 1, 1, 1)  # angle = (-2.0 ; +2.0), use only [-1.0; +1.0] -> [-pi; +pi]
+                    y[..., 4:5] = y[..., 4:5] * 4. - 2. # angle = (-2.0 ; +2.0), use only [-1.0; +1.0] -> [-pi; +pi]
 
                 z.append(y.view(bs, -1, self.no))
 
