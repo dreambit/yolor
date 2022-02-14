@@ -86,16 +86,20 @@ class IDetect(nn.Module):
         self.nc = nc  # number of classes
         self.no = nc + 5  # number of outputs per anchor
 
-        self.x_bin_sigmoid = SigmoidBin(bin_count=11, min=-0.5, max=1.5)
-        self.y_bin_sigmoid = SigmoidBin(bin_count=11, min=-0.5, max=1.5)
-        self.w_bin_sigmoid = SigmoidBin(bin_count=11, min=0.0, max=4.0)
-        self.h_bin_sigmoid = SigmoidBin(bin_count=11, min=0.0, max=4.0)
-        self.no = nc + 1 + 4 * self.x_bin_sigmoid.get_length()
+        #self.x_bin_sigmoid = SigmoidBin(bin_count=11, min=-0.5, max=1.5)
+        #self.y_bin_sigmoid = SigmoidBin(bin_count=11, min=-0.5, max=1.5)
+        self.w_bin_sigmoid = SigmoidBin(bin_count=21, min=0.0, max=4.0)
+        self.h_bin_sigmoid = SigmoidBin(bin_count=21, min=0.0, max=4.0)
+        # classes, x,y,obj
+        self.no = nc + 3 + \
+            self.w_bin_sigmoid.get_length() + self.h_bin_sigmoid.get_length()   # w-bce, h-bce
+            # + self.x_bin_sigmoid.get_length() + self.y_bin_sigmoid.get_length()
+            
 
         self.rotated = rotated
         if self.rotated:
-            self.angle_bin_sigmoid = SigmoidBin(bin_count=11, min=-1.1, max=1.1)
-            self.no += self.angle_bin_sigmoid.get_length()
+            self.angle_bin_sigmoid = SigmoidBin(bin_count=21, min=-1.1, max=1.1)
+            self.no += self.angle_bin_sigmoid.get_length() + 2      # im, re, angle-bce
 
         print(f"\n\n self.no = {self.no}, self.rotated = {self.rotated} \n\n")
         self.nl = len(anchors)  # number of detection layers
@@ -110,6 +114,13 @@ class IDetect(nn.Module):
         self.im = nn.ModuleList(ImplicitM(self.no * self.na) for _ in ch)
 
     def forward(self, x):
+
+        #self.x_bin_sigmoid.use_fw_regression = True
+        #self.y_bin_sigmoid.use_fw_regression = True
+        self.w_bin_sigmoid.use_fw_regression = True
+        self.h_bin_sigmoid.use_fw_regression = True
+        self.angle_bin_sigmoid.use_fw_regression = False
+
         # x = x.copy()  # for profiling
         z = []  # inference output
         self.training |= self.export
@@ -123,35 +134,40 @@ class IDetect(nn.Module):
                     self.grid[i] = self._make_grid(nx, ny).to(x[i].device)
 
                 y = x[i].sigmoid()
-                #y[..., 0:2] = (y[..., 0:2] * 2. - 0.5 + self.grid[i]) * self.stride[i]  # xy
+                y[..., 0:2] = (y[..., 0:2] * 2. - 0.5 + self.grid[i]) * self.stride[i]  # xy
                 #y[..., 2:4] = (y[..., 2:4] * 2) ** 2 * self.anchor_grid[i]  # wh
 
                 #print(f" y[..., 0:12] = {y[..., 0:12].shape}, grid[i] = {self.grid[i].shape}, stride[i] = {self.stride[i].shape}, anchor_grid[i] = {self.anchor_grid[i].shape}")
 
                 #print(f" self.stride[i] = {self.stride[i]}")
 
-                px = (self.x_bin_sigmoid.forward(y[..., 0:12]) + self.grid[i][..., 0]) * self.stride[i]
-                py = (self.y_bin_sigmoid.forward(y[..., 12:24]) + self.grid[i][..., 1]) * self.stride[i]
+                #px = (self.x_bin_sigmoid.forward(y[..., 0:12]) + self.grid[i][..., 0]) * self.stride[i]
+                #py = (self.y_bin_sigmoid.forward(y[..., 12:24]) + self.grid[i][..., 1]) * self.stride[i]
 
-                pw = self.w_bin_sigmoid.forward(y[..., 24:36]) * self.anchor_grid[i][..., 0]
-                ph = self.h_bin_sigmoid.forward(y[..., 36:48]) * self.anchor_grid[i][..., 1]
+                pw = self.w_bin_sigmoid.forward(y[..., 2:24]) * self.anchor_grid[i][..., 0]
+                ph = self.h_bin_sigmoid.forward(y[..., 24:46]) * self.anchor_grid[i][..., 1]
 
-                y[..., 0] = px
-                y[..., 1] = py
+                #y[..., 0] = px
+                #y[..., 1] = py
                 y[..., 2] = pw
                 y[..., 3] = ph
 
                 if not hasattr(self, 'rotated'):
                     self.rotated = False
                 if self.rotated:
-                    angle = self.angle_bin_sigmoid.forward(y[..., 48:60]) # 11 values = (1-reg + 11-bce)                                        
-                    y[..., 4] = angle
+                    angle_bias = self.angle_bin_sigmoid.forward(y[..., 48:70]) # 32 values = (1-reg + 31-bce)                                        
+                    
+                    im_bias = torch.sin( angle_bias * math.pi )
+                    re_bias = torch.cos( angle_bias * math.pi )
 
-                    y = torch.cat((y[..., 0:5], y[..., 60:]), dim=-1)
+                    y[..., 46:48] = y[..., 46:48] * 0.5 - 0.25
+                    y[..., 4] = torch.atan2(y[..., 46] + im_bias, y[..., 47] + re_bias) / math.pi                    
+
+                    y = torch.cat((y[..., 0:5], y[..., 70:]), dim=-1)
                 else:
-                    y = torch.cat((y[..., 0:4], y[..., 48:]), dim=-1)
+                    y = torch.cat((y[..., 0:4], y[..., 46:]), dim=-1)
 
-                print(f" y = {y.shape}, y.view(bs, -1, y.shape[-1]) = {y.view(bs, -1, y.shape[-1]).shape}")
+                #print(f" y = {y.shape}, y.view(bs, -1, y.shape[-1]) = {y.view(bs, -1, y.shape[-1]).shape}")
                 z.append(y.view(bs, -1, y.shape[-1]))
 
         return x if self.training else (torch.cat(z, 1), x)
@@ -267,12 +283,12 @@ class Model(nn.Module):
         m = self.model[-1]  # Detect() module
         for mi, s in zip(m.m, m.stride):  # from
             b = mi.bias.view(m.na, -1)  # conv.bias(255) to (3,85)
-            old = b[:, (0,12,24,36,48)].data
-            obj_idx = 60 if m.rotated else 48
+            old = b[:, (0,1,2,24,46,47,48)].data
+            obj_idx = 70 if m.rotated else 46
             b[:, :obj_idx].data += math.log(0.6 / (11 - 0.99))
             b[:, obj_idx].data += math.log(8 / (640 / s) ** 2)  # obj (8 objects per 640 image)
             b[:, (obj_idx+1):].data += math.log(0.6 / (m.nc - 0.99)) if cf is None else torch.log(cf / cf.sum())  # cls
-            b[:, (0,12,24,36,48)].data = old
+            b[:, (0,1,2,24,46,47,48)].data = old
             mi.bias = torch.nn.Parameter(b.view(-1), requires_grad=True)
 
     def _print_biases(self):
