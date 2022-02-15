@@ -168,8 +168,8 @@ def compute_loss(p, targets, model):  # predictions, targets, model
     MSEangle = nn.MSELoss().to(device)
 
     #xy_bin_sigmoid = SigmoidBin(bin_count=11, min=-0.5, max=1.5, use_loss_regression=False).to(device)
-    wh_bin_sigmoid = SigmoidBin(bin_count=21, min=0.0, max=4.0, use_loss_regression=False).to(device)
-    angle_bin_sigmoid = SigmoidBin(bin_count=21, min=-1.1, max=1.1, use_loss_regression=False).to(device)
+    wh_bin_sigmoid = SigmoidBin(bin_count=11, min=0.0, max=4.0, use_loss_regression=False).to(device)
+    angle_bin_sigmoid = SigmoidBin(bin_count=11, min=-1.1, max=1.1, use_loss_regression=False).to(device)
 
     # Class label smoothing https://arxiv.org/pdf/1902.04103.pdf eqn 3
     cp, cn = smooth_BCE(eps=0.0)
@@ -200,8 +200,8 @@ def compute_loss(p, targets, model):  # predictions, targets, model
 
             #x_loss, px = xy_bin_sigmoid.training_loss(ps[..., 0:12], tbox[i][..., 0])
             #y_loss, py = xy_bin_sigmoid.training_loss(ps[..., 12:24], tbox[i][..., 1])
-            w_loss, pw = wh_bin_sigmoid.training_loss(ps[..., 2:24], tbox[i][..., 2] / anchors[i][..., 0])
-            h_loss, ph = wh_bin_sigmoid.training_loss(ps[..., 24:46], tbox[i][..., 3] / anchors[i][..., 1])
+            w_loss, pw = wh_bin_sigmoid.training_loss(ps[..., 2:14], tbox[i][..., 2] / anchors[i][..., 0])
+            h_loss, ph = wh_bin_sigmoid.training_loss(ps[..., 14:26], tbox[i][..., 3] / anchors[i][..., 1])
 
             pw *= anchors[i][..., 0]
             ph *= anchors[i][..., 1]
@@ -221,14 +221,14 @@ def compute_loss(p, targets, model):  # predictions, targets, model
 
             if tangle[i] is not None:
 
-                angle_loss, angle_bias = angle_bin_sigmoid.training_loss(ps[..., 48:70], tangle[i])
+                angle_loss, angle_bias = angle_bin_sigmoid.training_loss(ps[..., 28:40], tangle[i])
                 langle += angle_loss
 
                 im_bias = torch.sin( angle_bias * math.pi )
                 re_bias = torch.cos( angle_bias * math.pi )
 
-                pim = ps[:, 46].to(device).sigmoid() * 0.5 - 0.25 + im_bias
-                pre = ps[:, 47].to(device).sigmoid() * 0.5 - 0.25 + re_bias
+                pim = ps[:, 26].to(device).sigmoid() * 0.5 - 0.25 + im_bias
+                pre = ps[:, 27].to(device).sigmoid() * 0.5 - 0.25 + re_bias
                 pangle = torch.atan2(pim, pre) / math.pi
 
                 tim = torch.sin(tangle[i] * math.pi)
