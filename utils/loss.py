@@ -169,7 +169,7 @@ def compute_loss(p, targets, model):  # predictions, targets, model
 
     #xy_bin_sigmoid = SigmoidBin(bin_count=11, min=-0.5, max=1.5, use_loss_regression=False).to(device)
     wh_bin_sigmoid = SigmoidBin(bin_count=11, min=0.0, max=4.0, use_loss_regression=False).to(device)
-    angle_bin_sigmoid = SigmoidBin(bin_count=11, min=-1.1, max=1.1, use_loss_regression=False).to(device)
+    angle_bin_sigmoid = SigmoidBin(bin_count=16, min=-1.1, max=1.1, use_loss_regression=False).to(device)
 
     # Class label smoothing https://arxiv.org/pdf/1902.04103.pdf eqn 3
     cp, cn = smooth_BCE(eps=0.0)
@@ -221,7 +221,7 @@ def compute_loss(p, targets, model):  # predictions, targets, model
 
             if tangle[i] is not None:
 
-                angle_loss, angle_bias = angle_bin_sigmoid.training_loss(ps[..., 28:40], tangle[i])
+                angle_loss, angle_bias = angle_bin_sigmoid.training_loss(ps[..., 28:45], tangle[i])
                 langle += angle_loss
 
                 im_bias = torch.sin( angle_bias * math.pi )

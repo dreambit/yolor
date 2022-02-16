@@ -98,7 +98,7 @@ class IDetect(nn.Module):
 
         self.rotated = rotated
         if self.rotated:
-            self.angle_bin_sigmoid = SigmoidBin(bin_count=11, min=-1.1, max=1.1)
+            self.angle_bin_sigmoid = SigmoidBin(bin_count=16, min=-1.1, max=1.1)
             self.no += self.angle_bin_sigmoid.get_length() + 2      # im, re, angle-bce
 
         print(f"\n\n self.no = {self.no}, self.rotated = {self.rotated} \n\n")
@@ -155,7 +155,7 @@ class IDetect(nn.Module):
                 if not hasattr(self, 'rotated'):
                     self.rotated = False
                 if self.rotated:
-                    angle_bias = self.angle_bin_sigmoid.forward(y[..., 28:40]) # 32 values = (1-reg + 31-bce)                                        
+                    angle_bias = self.angle_bin_sigmoid.forward(y[..., 28:45]) # 32 values = (1-reg + 31-bce)                                        
                     
                     im_bias = torch.sin( angle_bias * math.pi )
                     re_bias = torch.cos( angle_bias * math.pi )
@@ -163,7 +163,7 @@ class IDetect(nn.Module):
                     y[..., 26:28] = y[..., 26:28] * 0.5 - 0.25
                     y[..., 4] = torch.atan2(y[..., 26] + im_bias, y[..., 27] + re_bias) / math.pi                    
 
-                    y = torch.cat((y[..., 0:5], y[..., 40:]), dim=-1)
+                    y = torch.cat((y[..., 0:5], y[..., 45:]), dim=-1)
                 else:
                     y = torch.cat((y[..., 0:4], y[..., 26:]), dim=-1)
 
@@ -284,7 +284,7 @@ class Model(nn.Module):
         for mi, s in zip(m.m, m.stride):  # from
             b = mi.bias.view(m.na, -1)  # conv.bias(255) to (3,85)
             old = b[:, (0,1,2,14,26,27,28)].data
-            obj_idx = 40 if m.rotated else 26
+            obj_idx = 45 if m.rotated else 26
             b[:, :obj_idx].data += math.log(0.6 / (11 - 0.99))
             b[:, obj_idx].data += math.log(8 / (640 / s) ** 2)  # obj (8 objects per 640 image)
             b[:, (obj_idx+1):].data += math.log(0.6 / (m.nc - 0.99)) if cf is None else torch.log(cf / cf.sum())  # cls
