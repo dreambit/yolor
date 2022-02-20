@@ -1,19 +1,13 @@
 # parameters
-nc: 15  # number of classes
+nc: 80  # number of classes
 depth_multiple: 0.33  # model depth multiple
-width_multiple: 0.5  # layer channel multiple
-rotated: True
+width_multiple: 0.50  # layer channel multiple
 
 # anchors
 #anchors:
 #  - [12,16, 19,36, 40,28]  # P3/8
 #  - [36,75, 76,55, 72,146]  # P4/16
 #  - [142,110, 192,243, 459,401]  # P5/32
-
-#anchors:
-#  - [12,16, 40,28]  # P3/8
-#  - [36,75, 72,146]  # P4/16
-#  - [142,110, 459,401]  # P5/32
 
 anchors:
   - [25, 25]  # P3/8
@@ -57,5 +51,5 @@ head:
    [-1, 2, BottleneckCSP2, [512]], # 26
    [-1, 1, Conv, [1024, 3, 1]],
 
-   [[19,23,27], 1, IDetect, [nc, anchors, True]],   # Detect(P3, P4, P5)
+   [[19,23,27], 1, IDetect, [nc, anchors]],   # Detect(P3, P4, P5)
   ]

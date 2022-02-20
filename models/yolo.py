@@ -88,8 +88,8 @@ class IDetect(nn.Module):
 
         #self.x_bin_sigmoid = SigmoidBin(bin_count=11, min=-0.5, max=1.5)
         #self.y_bin_sigmoid = SigmoidBin(bin_count=11, min=-0.5, max=1.5)
-        self.w_bin_sigmoid = SigmoidBin(bin_count=11, min=0.0, max=4.0)
-        self.h_bin_sigmoid = SigmoidBin(bin_count=11, min=0.0, max=4.0)
+        self.w_bin_sigmoid = SigmoidBin(bin_count=21, min=0.0, max=4.0)
+        self.h_bin_sigmoid = SigmoidBin(bin_count=21, min=0.0, max=4.0)
         # classes, x,y,obj
         self.no = nc + 3 + \
             self.w_bin_sigmoid.get_length() + self.h_bin_sigmoid.get_length()   # w-bce, h-bce
@@ -98,7 +98,7 @@ class IDetect(nn.Module):
 
         self.rotated = rotated
         if self.rotated:
-            self.angle_bin_sigmoid = SigmoidBin(bin_count=16, min=-1.1, max=1.1)
+            self.angle_bin_sigmoid = SigmoidBin(bin_count=31, min=-1.1, max=1.1)
             self.no += self.angle_bin_sigmoid.get_length() + 2      # im, re, angle-bce
 
         print(f"\n\n self.no = {self.no}, self.rotated = {self.rotated} \n\n")
@@ -119,7 +119,12 @@ class IDetect(nn.Module):
         #self.y_bin_sigmoid.use_fw_regression = True
         self.w_bin_sigmoid.use_fw_regression = True
         self.h_bin_sigmoid.use_fw_regression = True
-        self.angle_bin_sigmoid.use_fw_regression = False
+
+        if not hasattr(self, 'rotated'):
+            self.rotated = False
+
+        if self.rotated:
+            self.angle_bin_sigmoid.use_fw_regression = False
 
         # x = x.copy()  # for profiling
         z = []  # inference output
@@ -144,28 +149,26 @@ class IDetect(nn.Module):
                 #px = (self.x_bin_sigmoid.forward(y[..., 0:12]) + self.grid[i][..., 0]) * self.stride[i]
                 #py = (self.y_bin_sigmoid.forward(y[..., 12:24]) + self.grid[i][..., 1]) * self.stride[i]
 
-                pw = self.w_bin_sigmoid.forward(y[..., 2:14]) * self.anchor_grid[i][..., 0]
-                ph = self.h_bin_sigmoid.forward(y[..., 14:26]) * self.anchor_grid[i][..., 1]
+                pw = self.w_bin_sigmoid.forward(y[..., 2:24]) * self.anchor_grid[i][..., 0]
+                ph = self.h_bin_sigmoid.forward(y[..., 24:46]) * self.anchor_grid[i][..., 1]
 
                 #y[..., 0] = px
                 #y[..., 1] = py
                 y[..., 2] = pw
                 y[..., 3] = ph
 
-                if not hasattr(self, 'rotated'):
-                    self.rotated = False
                 if self.rotated:
-                    angle_bias = self.angle_bin_sigmoid.forward(y[..., 28:45]) # 32 values = (1-reg + 31-bce)                                        
+                    angle_bias = self.angle_bin_sigmoid.forward(y[..., 48:80]) # 32 values = (1-reg + 31-bce)                                        
                     
                     im_bias = torch.sin( angle_bias * math.pi )
                     re_bias = torch.cos( angle_bias * math.pi )
 
-                    y[..., 26:28] = y[..., 26:28] * 0.5 - 0.25
-                    y[..., 4] = torch.atan2(y[..., 26] + im_bias, y[..., 27] + re_bias) / math.pi                    
+                    y[..., 46:48] = y[..., 46:48] * 0.5 - 0.25
+                    y[..., 4] = torch.atan2(y[..., 46] + im_bias, y[..., 47] + re_bias) / math.pi                    
 
-                    y = torch.cat((y[..., 0:5], y[..., 45:]), dim=-1)
+                    y = torch.cat((y[..., 0:5], y[..., 80:]), dim=-1)
                 else:
-                    y = torch.cat((y[..., 0:4], y[..., 26:]), dim=-1)
+                    y = torch.cat((y[..., 0:4], y[..., 46:]), dim=-1)
 
                 #print(f" y = {y.shape}, y.view(bs, -1, y.shape[-1]) = {y.view(bs, -1, y.shape[-1]).shape}")
                 z.append(y.view(bs, -1, y.shape[-1]))
@@ -283,12 +286,12 @@ class Model(nn.Module):
         m = self.model[-1]  # Detect() module
         for mi, s in zip(m.m, m.stride):  # from
             b = mi.bias.view(m.na, -1)  # conv.bias(255) to (3,85)
-            old = b[:, (0,1,2,14,26,27,28)].data
+            old = b[:, (0,1,2,24,46,47,48)].data
             obj_idx = 45 if m.rotated else 26
             b[:, :obj_idx].data += math.log(0.6 / (11 - 0.99))
             b[:, obj_idx].data += math.log(8 / (640 / s) ** 2)  # obj (8 objects per 640 image)
             b[:, (obj_idx+1):].data += math.log(0.6 / (m.nc - 0.99)) if cf is None else torch.log(cf / cf.sum())  # cls
-            b[:, (0,1,2,14,26,27,28)].data = old
+            b[:, (0,1,2,24,46,47,48)].data = old
             mi.bias = torch.nn.Parameter(b.view(-1), requires_grad=True)
 
     def _print_biases(self):
