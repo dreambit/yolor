@@ -117,7 +117,7 @@ def detect(save_img=False):
                         label = '%s %.2f %.2f' % (names[int(cls)], conf, angle)
                         #plot_one_box(xyxy, im0, label=label, color=colors[int(cls)], line_thickness=3)
                         #xywh = xyxy2xywh(torch.tensor(xyxy).view(1, 4))
-                        plot_one_rotated_box(xyxy, angle, im0, label=label, color=colors[int(cls)], line_thickness=2)
+                        plot_one_rotated_box(xyxy, angle, im0, label=None, color=colors[int(cls)], line_thickness=2)
 
             # Print time (inference + NMS)
             print('%sDone. (%.3fs)' % (s, t2 - t1))

@@ -296,7 +296,7 @@ def build_targets(p, targets, model):
     tcls, tbox, tangle, indices, anch = [], [], [], [], []
     gain_count = targets.shape[1] + 1
 
-    gain = torch.ones(gain_count, device=targets.device)  # normalized to gridspace gain
+    gain = torch.ones(gain_count, device=targets.device).long()  # normalized to gridspace gain
     ai = torch.arange(na, device=targets.device).float().view(na, 1).repeat(1, nt)  # same as .repeat_interleave(nt)
     
     #print(f" init targets = {targets.shape} ")

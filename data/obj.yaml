@@ -1,0 +1,14 @@
+# Parking
+
+# train and val data as 1) directory: path/images/, 2) file: path/images.txt, or 3) list: [path1/images/, path2/images/]
+train: /mnt/vdb1/train.txt
+val: /mnt/vdb1/test.txt
+test: /mnt/vdb1/test.txt
+
+
+# number of classes
+nc: 1
+
+# class names
+names: [ 'car0' ]
+#names: [ 'car0', 'obj1', 'obj2', 'obj3', 'obj4']

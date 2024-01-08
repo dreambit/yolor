@@ -367,8 +367,8 @@ def box_iou_rotated1(box1, angle1, box2, angle2):
 
 def rotated_iou(box1, angle1, box2, angle2):
     int_area = 0
-    r1 = ((box1[0], box1[1]), (box1[2], box1[3]), angle1)
-    r2 = ((box2[0], box2[1]), (box2[2], box2[3]), angle2)
+    r1 = ((int(box1[0]), int(box1[1])), (int(box1[2]), int(box1[3])), float(angle1))
+    r2 = ((int(box2[0]), int(box2[1])), (int(box2[2]), int(box2[3])), float(angle2))
     
     int_pts = cv2.rotatedRectangleIntersection(r1, r2)[1]
     if int_pts is not None:
